@@ -1,0 +1,18 @@
+WG Tunnel è un client VPN WireGuard che offre il giusto equilibrio tra semplicità e robustezza, rendendolo il client ideale sia per gli utenti occasionali che per quelli esperti.
+Sia che tu voglia semplicemente automatizzare la connessione alla tua VPN o che tu sia un utente esperto con esigenze avanzate in materia di privacy, WG Tunnel fa al caso tuo.
+
+Funzionalità:
+
+- **Tunneling automatico:** attiva automaticamente i tunnel in base all'SSID Wi-Fi, alle connessioni Ethernet o alle reti dati mobili.
+- **Risoluzione differita degli endpoint:** risolve gli endpoint in modo sicuro e aggiorna i peer quando il tunnel è già attivo, per una maggiore affidabilità e protezione dalle fughe di dati all'avvio.
+- **Strumenti di monitoraggio:** funzionalità avanzate di monitoraggio del tunnel per il controllo delle prestazioni del tunnel.
+- **Supporto AmneziaWG:** supporto completo per AmneziaWG dalla 2.0 alla 3.1, per una solida protezione dalla censura.
+- **Split Tunneling:** supporto flessibile per il routing di app o traffico specifici attraverso la VPN.
+- **DNS split e cifrato:** risolve i DNS attraverso il tunnel con DNS in chiaro, DoT o DoH e, facoltativamente, divide la risoluzione per suffisso di dominio (tunnel o sistema).
+- **Opzioni di proxy:** supporto proxy HTTP e SOCKS5 integrato che consente alle app di terze parti di instradare il loro traffico.
+- **Modalità app:** supporto per più modalità tunnel, tra cui VPN standard, kernel, lockdown (kill switch personalizzato) e modalità proxy.
+- **Controlli rapidi:** riquadro Impostazioni rapide e scorciatoie sulla schermata iniziale per azioni di attivazione/disattivazione facili.
+- **Supporto dell'automazione:** automazione basata sull'intento per il controllo dei tunnel e il tunneling automatico.
+- **Gestione DNS dinamica:** rileva e aggiorna le modifiche DNS senza riavviare il tunnel.
+- **Endpoint IPv6:** passa automaticamente agli endpoint IPv6 o torna a IPv4 in base alle condizioni della rete, senza bisogno di riavviare.
+- **Supporto Android TV:** supporto Android TV per quasi tutte le funzionalità dell'app.

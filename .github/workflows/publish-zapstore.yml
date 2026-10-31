@@ -1,0 +1,38 @@
+name: publish-zapstore
+
+on:
+  workflow_dispatch:
+    inputs:
+      config:
+        type: string
+        description: "zapstore config file"
+        default: "zapstore.yaml"
+  workflow_call:
+    inputs:
+      config:
+        type: string
+        description: "zapstore config file"
+        default: "zapstore.yaml"
+
+permissions:
+  contents: read
+
+jobs:
+  publish-zapstore:
+    name: Publish to Zapstore
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: 'stable'
+
+      - name: Install zsp
+        run: go install github.com/zapstore/zsp/cmd/zsp@latest
+
+      - name: Publish to Zapstore
+        env:
+          SIGN_WITH: ${{ secrets.ZAPSTORE_SIGN_WITH }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: zsp publish -q "${{ inputs.config }}"

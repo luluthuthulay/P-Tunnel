@@ -1,0 +1,9 @@
+repository: https://github.com/wgtunnel/android
+match: 'wgtunnel-standalone-v[0-9.]+-nightly\+git\.[0-9a-f]+\.apk$'
+prerelease_channel: nightly
+
+metadata_sources: [github]
+
+icon: ./app/src/nightly/ic_launcher-nightly.png
+summary: Nightly builds of WG Tunnel. Bleeding-edge, may contain bugs.
+tags: [vpn, wireguard, amneziawg, nightly]

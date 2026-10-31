@@ -1,0 +1,7 @@
+What's new:
+- Dynamic AMOLED theme
+- Ping servers from main screen while no tunnel is active
+- Bugfixes for Android TV file imports
+- Bugfixes for split tunnel configuration changes
+- Bugfixes for backup/restore, with TV support
+- Various other minor improvements and fixes

@@ -1,0 +1,1 @@
+WireGuard & AmneziaWG VPN 客户端，自动隧道关闭和代理.

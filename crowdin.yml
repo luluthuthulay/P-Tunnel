@@ -1,0 +1,182 @@
+project_id: 911151
+preserve_hierarchy: true
+
+files:
+  - source: "/app/src/main/res/values/strings.xml"
+    translation: "/app/src/main/res/values-%android_code%/%original_file_name%"
+    skip_untranslated_strings: true
+    languages_mapping:
+      android_code:
+        # Spanish
+        es-ES: es
+
+        # Indonesian
+        id: in
+
+        # Chinese
+        zh-CN: zh-rCN
+        zh-TW: zh-rTW
+        zh-HK: zh-rHK
+
+        # Urdu
+        ur-PK: ur
+        ur-IN: ur-rIN
+
+        # Portuguese
+        pt-BR: pt-rBR
+        pt-PT: pt-rPT
+
+        # Other languages
+        cs: cs
+        de: de
+        et: et
+        fa: fa
+        fi: fi
+        fr: fr
+        hu: hu
+        it: it
+        ja: ja
+        ka: ka
+        ko: ko
+        nl: nl
+        pl: pl
+        ru: ru
+        sk: sk
+        ta: ta
+        tr: tr
+        uk: uk
+        vi: vi
+        eu: eu
+
+    excluded_target_languages:
+      - en
+      - en-US
+
+  # Folder names must match Play Console listing locales, not Crowdin defaults.
+  # https://support.google.com/googleplay/android-developer/table/4419860
+  # Quote "no": YAML 1.1 treats `no` as boolean, and Crowdin's Java parser
+  # then fails with Boolean cannot be cast to String.
+  - source: "/fastlane/metadata/android/en-US/title.txt"
+    translation: "/fastlane/metadata/android/%locale%/%original_file_name%"
+    languages_mapping:
+      locale:
+        ar: ar
+        cs: cs-CZ
+        da: da-DK
+        de: de-DE
+        es-ES: es-ES
+        et: et
+        eu: eu-ES
+        fa: fa
+        fi: fi-FI
+        fr: fr-FR
+        hu: hu-HU
+        id: id
+        it: it-IT
+        ja: ja-JP
+        ka: ka-GE
+        ko: ko-KR
+        nl: nl-NL
+        "no": "no-NO"
+        pl: pl-PL
+        pt-BR: pt-BR
+        pt-PT: pt-PT
+        ru: ru-RU
+        sk: sk
+        sr: sr
+        ta: ta-IN
+        th: th
+        tr: tr-TR
+        uk: uk
+        ur-PK: ur
+        vi: vi
+        zh-CN: zh-CN
+        zh-TW: zh-TW
+    excluded_target_languages:
+      - en
+      - en-US
+
+  - source: "/fastlane/metadata/android/en-US/short_description.txt"
+    translation: "/fastlane/metadata/android/%locale%/%original_file_name%"
+    skip_untranslated_files: true
+    languages_mapping:
+      locale:
+        ar: ar
+        cs: cs-CZ
+        da: da-DK
+        de: de-DE
+        es-ES: es-ES
+        et: et
+        eu: eu-ES
+        fa: fa
+        fi: fi-FI
+        fr: fr-FR
+        hu: hu-HU
+        id: id
+        it: it-IT
+        ja: ja-JP
+        ka: ka-GE
+        ko: ko-KR
+        nl: nl-NL
+        "no": "no-NO"
+        pl: pl-PL
+        pt-BR: pt-BR
+        pt-PT: pt-PT
+        ru: ru-RU
+        sk: sk
+        sr: sr
+        ta: ta-IN
+        th: th
+        tr: tr-TR
+        uk: uk
+        ur-PK: ur
+        vi: vi
+        zh-CN: zh-CN
+        zh-TW: zh-TW
+    excluded_target_languages:
+      - en
+      - en-US
+
+  - source: "/fastlane/metadata/android/en-US/full_description.txt"
+    translation: "/fastlane/metadata/android/%locale%/%original_file_name%"
+    skip_untranslated_files: true
+    languages_mapping:
+      locale:
+        ar: ar
+        cs: cs-CZ
+        da: da-DK
+        de: de-DE
+        es-ES: es-ES
+        et: et
+        eu: eu-ES
+        fa: fa
+        fi: fi-FI
+        fr: fr-FR
+        hu: hu-HU
+        id: id
+        it: it-IT
+        ja: ja-JP
+        ka: ka-GE
+        ko: ko-KR
+        nl: nl-NL
+        "no": "no-NO"
+        pl: pl-PL
+        pt-BR: pt-BR
+        pt-PT: pt-PT
+        ru: ru-RU
+        sk: sk
+        sr: sr
+        ta: ta-IN
+        th: th
+        tr: tr-TR
+        uk: uk
+        ur-PK: ur
+        vi: vi
+        zh-CN: zh-CN
+        zh-TW: zh-TW
+    excluded_target_languages:
+      - en
+      - en-US
+
+commit_message: "chore: update translations from Crowdin"
+append_commit_message: false

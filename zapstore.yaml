@@ -1,0 +1,4 @@
+repository: https://github.com/wgtunnel/android
+match: 'wgtunnel-fdroid-v[0-9.]+\.apk$'
+
+metadata_sources: [playstore, github]

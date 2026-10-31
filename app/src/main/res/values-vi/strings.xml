@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_permission_title">Kiểm soát tunnel và các tính năng auto-tunnel.</string>
+    <string name="app_permission_description">Kiểm soát tunnel và các tính năng auto-tunnel.</string>
+    <string name="error_file_extension">Tệp không phải .conf hay .zip</string>
+    <string name="tunnels">Các đường nối</string>
+    <string name="tunnel_mobile_data">Tunnel trên dữ liệu di động</string>
+    <string name="privacy_policy">Chính sách quyền riêng tư</string>
+    <string name="prominent_background_location_message">Tính năng này yêu cầu quyền truy cập vị trí nền (background location permission) để có thể giám sát SSID Wi-Fi ngay cả khi ứng dụng đang đóng. Để biết thêm chi tiết, vui lòng xem Chính sách quyền riêng tư được liên kết trên màn hình Hỗ trợ.</string>
+    <string name="prominent_background_location_title">Tiết lộ quyền truy cập vị trí nền</string>
+    <string name="thank_you">Cảm ơn vì đã sử dụng WG Tunnel!</string>
+    <string name="trusted_ssid_value_description">Gửi SSID</string>
+    <string name="add_tunnels_text">Thêm từ tệp hoặc tệp zip</string>
+    <string name="add_from_qr">Thêm từ mã QR</string>
+    <string name="tunnel_name">Tên tunnel</string>
+    <string name="config_changes_saved">Các thay đổi cấu hình đã được lưu.</string>
+    <string name="public_key">Khóa công khai</string>
+    <string name="addresses">Địa chỉ IP</string>
+    <string name="dns_servers">Máy chủ DNS</string>
+    <string name="name">Tên</string>
+    <string name="always_on_vpn_support">Cho phép VPN luôn bật</string>
+    <string name="location_services_not_detected">Dịch vụ định vị không khả dụng</string>
+    <string name="vpn_on">VPN bật</string>
+    <!-- AmneziaWG 3.0 -->
+    <!-- Tunnel states -->
+    <!-- Notification formatting -->
+    <!-- Informational notifications -->
+    <!-- Errors -->
+    <string name="live_updates">Cập nhật trực tiếp</string>
+    <string name="live_updates_desc">Hiển thị tiến trình và trạng thái kết nối của đường nối đang hoạt động trên thanh trạng thái và màn hình khóa. Áp dụng khi chỉ có một đường nối đang chạy</string>
+    <string name="notification_connection_manual">Kết nối thủ công</string>
+    <string name="notification_connection_auto">Đường nối tự động</string>
+</resources>
