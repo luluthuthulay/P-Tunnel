@@ -12,6 +12,7 @@ import com.zaneschepke.networkmonitor.StableNetworkEngine
 import com.zaneschepke.wireguardautotunnel.R
 import com.zaneschepke.wireguardautotunnel.core.orchestration.TunnelCoordinator
 import com.zaneschepke.wireguardautotunnel.di.Dispatcher
+import com.zaneschepke.wireguardautotunnel.domain.enums.TunnelActionSource
 import com.zaneschepke.wireguardautotunnel.domain.enums.NotificationAction
 import com.zaneschepke.wireguardautotunnel.domain.enums.TunnelMode
 import com.zaneschepke.wireguardautotunnel.domain.model.AutoTunnelSettings
@@ -23,6 +24,10 @@ import com.zaneschepke.wireguardautotunnel.domain.state.AutoTunnelState
 import com.zaneschepke.wireguardautotunnel.domain.state.toDomain
 import com.zaneschepke.wireguardautotunnel.notification.AndroidNotificationService
 import com.zaneschepke.wireguardautotunnel.notification.NotificationService
+import com.zaneschepke.wireguardautotunnel.ptunnel.PTunnelConnect
+import com.zaneschepke.wireguardautotunnel.ptunnel.PTunnelRestoreHandler
+import com.zaneschepke.wireguardautotunnel.ptunnel.PTunnelWalkGuard
+import com.zaneschepke.wireguardautotunnel.service.ServiceManager
 import com.zaneschepke.wireguardautotunnel.service.tile.AutoTunnelTileRefresher
 import com.zaneschepke.wireguardautotunnel.util.Constants
 import com.zaneschepke.wireguardautotunnel.util.extensions.debounceFalling
@@ -60,6 +65,9 @@ class AutoTunnelService : LifecycleService() {
     private val tunnelsRepository: TunnelRepository by inject()
     private val tunnelCoordinator: TunnelCoordinator by inject()
     private val backend: Backend by inject()
+
+    private val ptunnelRestoreHandler: PTunnelRestoreHandler by inject()
+    private val serviceManager: ServiceManager by inject()
 
     private val reconciler by lazy {
         AutoTunnelReconciler(
@@ -152,9 +160,108 @@ class AutoTunnelService : LifecycleService() {
                 supervisorScope {
                     launch { runReconciler() }
                     launch { runLocationPermissionsNotificationJob() }
+                    launch { runPTunnelServiceAuto() }
                 }
             }
         }
+
+    /**
+     * P-Tunnel auto while the app is closed, reusing WG Tunnel's own
+     * machinery (user 2026-11-01: "source code ရှိတယ်လေ ယူသုံး").
+     *
+     * The WG reconciler above drives stored Room tunnels only, so it
+     * cannot drive the transient P-Tunnel tunnel (-1). This observer
+     * mirrors the ViewModel auto observer with the SAME inputs —
+     * StableNetworkEngine.stableState, the same AutoTunnel settings,
+     * TunnelCoordinator.backendStatus — but it runs in this
+     * foreground service's scope (START_STICKY + ongoing
+     * "monitoring" notification), so it survives the app being
+     * swiped away, unlike the Activity-scoped ViewModel observer.
+     * The connect itself reuses [PTunnelRestoreHandler.tryBootAuto]:
+     * the same last-connected-first two-pass walk with handshake
+     * waits, guarded by [PTunnelWalkGuard] so it never fights the
+     * ViewModel walk. Manual override is shared with the ViewModel
+     * through [PTunnelWalkGuard.manualOverride]: a manual OFF in
+     * the UI blocks this service observer too, until the network
+     * type changes — WG flow.
+     *
+     * Limit, honest: tryBootAuto only reconnects a stored
+     * last-connected endpoint. If P-Tunnel was never connected, the
+     * service has nothing to reconnect; the first connect still
+     * needs the app opened once.
+     */
+    private suspend fun runPTunnelServiceAuto() {
+        combine(
+                autoTunnelRepository.flow,
+                networkEngine.stableState.mapNotNull { it?.state },
+                tunnelCoordinator.backendStatus,
+            ) { settings, connectivity, backend ->
+                val networkType =
+                    when (connectivity.activeNetwork) {
+                        is ActiveNetwork.Wifi -> "Wifi"
+                        is ActiveNetwork.Cellular -> "Cellular"
+                        is ActiveNetwork.Ethernet -> "Ethernet"
+                        is ActiveNetwork.Disconnected -> "Disconnected"
+                    }
+                PTunnelServiceAutoKey(
+                    networkType = networkType,
+                    autoEnabled = settings.isAutoTunnelEnabled,
+                    wifiEnabled = settings.isTunnelOnWifiEnabled,
+                    mobileEnabled = settings.isTunnelOnMobileDataEnabled,
+                    ethernetEnabled = settings.isTunnelOnEthernetEnabled,
+                    stopOnNoInternet = settings.isStopOnNoInternetEnabled,
+                    backendHasPTunnel =
+                        backend.activeTunnels.containsKey(
+                            PTunnelConnect.PTUNNEL_TUNNEL_ID
+                        ),
+                )
+            }
+            .distinctUntilChanged()
+            .debounce(PTUNNEL_SERVICE_AUTO_DEBOUNCE_MS.milliseconds)
+            .collect { key ->
+                if (key.networkType != PTunnelWalkGuard.lastAutoNetworkType) {
+                    PTunnelWalkGuard.manualOverride = false
+                    PTunnelWalkGuard.lastAutoNetworkType = key.networkType
+                }
+                if (PTunnelWalkGuard.isBusy || PTunnelWalkGuard.exhausted) return@collect
+                if (!serviceManager.hasVpnPermission()) return@collect
+                val autoForType =
+                    key.autoEnabled &&
+                        when (key.networkType) {
+                            "Wifi" -> key.wifiEnabled
+                            "Cellular" -> key.mobileEnabled
+                            "Ethernet" -> key.ethernetEnabled
+                            else -> false
+                        }
+                if (key.backendHasPTunnel) {
+                    if (key.networkType == "Disconnected" && key.stopOnNoInternet) {
+                        tunnelCoordinator.stopTunnel(
+                            PTunnelConnect.PTUNNEL_TUNNEL_ID,
+                            TunnelActionSource.AUTO_TUNNEL,
+                        )
+                    }
+                    return@collect
+                }
+                if (!autoForType) return@collect
+                if (PTunnelWalkGuard.manualOverride) return@collect
+                // Walk in a child job: tryBootAuto waits for usable
+                // network and walks candidates; the guard inside it
+                // drops overlapping triggers.
+                lifecycleScope.launch(ioDispatcher) {
+                    ptunnelRestoreHandler.tryBootAuto()
+                }
+            }
+    }
+
+    private data class PTunnelServiceAutoKey(
+        val networkType: String,
+        val autoEnabled: Boolean,
+        val wifiEnabled: Boolean,
+        val mobileEnabled: Boolean,
+        val ethernetEnabled: Boolean,
+        val stopOnNoInternet: Boolean,
+        val backendHasPTunnel: Boolean,
+    )
 
     fun stop() {
         stateHolder.setActive(false)
@@ -292,6 +399,7 @@ class AutoTunnelService : LifecycleService() {
     }
 
     companion object {
+        private const val PTUNNEL_SERVICE_AUTO_DEBOUNCE_MS = 1_000L
         private const val CAPTIVE_PORTAL_CLEAR_CONFIRM_MS = 8_000L
         private const val NO_INTERNET_CONFIRM_MS = 8_000L
         private const val STARTUP_SETTLE_MS = 2_000L

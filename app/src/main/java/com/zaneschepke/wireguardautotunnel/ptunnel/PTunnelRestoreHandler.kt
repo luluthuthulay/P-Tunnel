@@ -112,8 +112,10 @@ class PTunnelRestoreHandler(
      * until a manual ON).
      *
      * Gates (all must hold, else false = "not applicable"):
-     * - a last-connected record exists (a manual disconnect clears it,
-     *   so there is nothing to auto-connect) and a base conf is stored;
+     * - a base conf is stored, and either a last-connected record
+     *   exists OR a cached feed exists (fresh install, never
+     *   connected: the cached feed is the implicit config, walk
+     *   starts at feed #1 — WG pre-configured-tunnel rule);
      * - VPN permission is granted (auto never requests permission);
      * - no other P-Tunnel walk holds [PTunnelWalkGuard].
      *
@@ -130,7 +132,16 @@ class PTunnelRestoreHandler(
      * [tryRestore] stays the path everywhere else.
      */
     suspend fun tryBootAuto(): Boolean {
-        val storedId = ptunnelStore.getConnectedEndpoint() ?: return false
+        // WG pre-configured-tunnel rule (user 2026-11-01): a fresh
+        // install that never connected can still auto-connect, like
+        // WG's stored tunnel that was configured but never manually
+        // started. The cached feed is the implicit config: with no
+        // stored last-connected id, the walk starts at feed #1
+        // (orderedWalk with a null start id). Base conf + cached feed
+        // both arrive on the first app open (prefetch), so this only
+        // runs after settings were opened at least once — never on a
+        // truly untouched install with no feed at all.
+        val storedId = ptunnelStore.getConnectedEndpoint()
         val baseConf = ptunnelStore.getBaseConf() ?: return false
         if (!serviceManager.hasVpnPermission()) return false
         if (!PTunnelWalkGuard.tryAcquire()) return false
@@ -141,7 +152,12 @@ class PTunnelRestoreHandler(
                         .first { it.hasUsableNetwork() }
                 }
             if (usable == null) {
-                val endpoint = parseStoredEndpoint(storedId) ?: return false
+                // No usable network yet: only a stored endpoint can
+                // single-start (the tunnel handshakes when the network
+                // arrives). A fresh install with no stored id has
+                // nothing to single-start; the next network change
+                // re-triggers this walk.
+                val endpoint = storedId?.let { parseStoredEndpoint(it) } ?: return false
                 val config =
                     try {
                         PTunnelConnect.buildConfig(baseConf, endpoint)
@@ -156,7 +172,7 @@ class PTunnelRestoreHandler(
                 ptunnelStore.getEndpointsJson()?.let { raw ->
                     runCatching { PTunnelFeedService.parse(raw).endpoints }.getOrNull()
                 }.orEmpty()
-            val storedEndpoint = parseStoredEndpoint(storedId)
+            val storedEndpoint = storedId?.let { parseStoredEndpoint(it) }
             val candidates =
                 when {
                     storedEndpoint == null -> cached
@@ -164,6 +180,9 @@ class PTunnelRestoreHandler(
                     else -> listOf(storedEndpoint) + cached
                 }
             if (candidates.isEmpty()) return false
+            // storedId null (never connected) → orderedWalk starts at
+            // feed #1 by definition; storedId present → last-connected
+            // first, as before.
             val ordered = PTunnelConnect.orderedWalk(candidates, storedId)
             val context = ptunnelStore.appContext
             for (candidate in ordered) {

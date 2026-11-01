@@ -328,9 +328,9 @@ class SharedAppViewModel(
                     .distinctUntilChanged()
                     .debounce(1_000L)
                     .collect { key ->
-                        if (key.networkType != ptunnelLastAutoNetworkType) {
-                            ptunnelAutoManualOverride = false
-                            ptunnelLastAutoNetworkType = key.networkType
+                        if (key.networkType != PTunnelWalkGuard.lastAutoNetworkType) {
+                            PTunnelWalkGuard.manualOverride = false
+                            PTunnelWalkGuard.lastAutoNetworkType = key.networkType
                         }
                         if (ptunnelJob?.isActive == true || key.isConnecting) return@collect
                         if (PTunnelWalkGuard.exhausted) return@collect
@@ -344,11 +344,19 @@ class SharedAppViewModel(
                                     else -> false
                                 }
                         if (key.backendHasPTunnel) {
-                            // Tunnel up: stop it only when it is an AUTO
-                            // tunnel and the network is gone with
-                            // stop-on-no-internet on. A manual tunnel is
-                            // never touched by the observer.
-                            if (ptunnelAutoStarted && key.networkType == "Disconnected" &&
+                            // Tunnel up: WG Tunnel flow (user 2026-11-01).
+                            // When the network is gone and
+                            // stop-on-no-internet is on, the tunnel
+                            // stops no matter who started it — auto,
+                            // manual toggle, or boot auto. The old
+                            // ptunnelAutoStarted gate meant manual and
+                            // boot-auto tunnels never auto-stopped, so
+                            // turning Wi-Fi/data off left the VPN up.
+                            // stopPTunnel(manual=false) keeps the stored
+                            // last-connected id, so the network-return
+                            // restart walks from it. (ptunnelAutoStarted
+                            // is kept for the start branch only.)
+                            if (key.networkType == "Disconnected" &&
                                 key.stopOnNoInternet
                             ) {
                                 stopPTunnel(manual = false)
@@ -359,7 +367,7 @@ class SharedAppViewModel(
                         // is auto-enabled, no manual override stands, and
                         // there is a feed to walk.
                         if (!autoForType) return@collect
-                        if (ptunnelAutoManualOverride) return@collect
+                        if (PTunnelWalkGuard.manualOverride) return@collect
                         if (key.endpointsEmpty) return@collect
                         startPTunnel()
                         ptunnelAutoStarted = true
@@ -469,12 +477,8 @@ class SharedAppViewModel(
      * feed arrival) — never to a steady state — so a walk that
      * exhausted both passes is never retried in a loop.
      */
-    /** Manual switch-OFF override: blocks auto-start until the network type changes. */
-    private var ptunnelAutoManualOverride: Boolean = false
     /** True only while the current -1 tunnel was started by the auto observer. */
     private var ptunnelAutoStarted: Boolean = false
-    /** Network type of the last observer evaluation, for override clearing. */
-    private var ptunnelLastAutoNetworkType: String? = null
 
     /** Decision-relevant snapshot for the auto observer's distinct key. */
     private data class PTunnelAutoKey(
@@ -736,7 +740,7 @@ class SharedAppViewModel(
         if (checked) {
             // Manual ON clears the auto blocks: a fresh manual connect
             // always runs, even after an exhausted walk or a manual OFF.
-            ptunnelAutoManualOverride = false
+            PTunnelWalkGuard.manualOverride = false
             PTunnelWalkGuard.exhausted = false
             ptunnelAutoStarted = false
             startPTunnel()
@@ -797,7 +801,7 @@ class SharedAppViewModel(
         pendingPTunnelCandidate = null
         pendingPTunnelCandidates = null
         ptunnelAutoStarted = false
-        if (manual) ptunnelAutoManualOverride = true
+        if (manual) PTunnelWalkGuard.manualOverride = true
         viewModelScope.launch {
             tunnelCoordinator.stopTunnel(PTunnelConnect.PTUNNEL_TUNNEL_ID)
             if (manual) {
