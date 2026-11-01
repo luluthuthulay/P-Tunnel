@@ -37,7 +37,11 @@ licensee {
 }
 
 configure<ApplicationExtension> {
-    namespace = Constants.APP_ID
+    // P-Tunnel: namespace must stay at the code package so R/BuildConfig
+    // resolve to com.zaneschepke.wireguardautotunnel.R (121 files import it).
+    // applicationId below (com.ptunnel.lulu) is the installed package and
+    // is intentionally different from namespace.
+    namespace = "com.zaneschepke.wireguardautotunnel"
     compileSdk = libs.versions.compileSdk.get().toInt()
 
     androidResources { generateLocaleConfig = true }
