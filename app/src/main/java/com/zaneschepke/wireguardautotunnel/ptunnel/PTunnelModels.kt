@@ -68,4 +68,38 @@ data class PTunnelUiState(
     val connectingEndpoint: EndpointInfo? = null,
     /** User-safe, generic error text for the card. Detail goes to Crashlytics, not here. */
     val lastError: String? = null,
+    /**
+     * v3: short, non-secret feed-failure line, shown on the home card
+     * ONLY when there is no endpoint at all to show (fresh install, feed
+     * failed, cache empty). It is never set by the background poll and
+     * never replaces a cached or connected endpoint; a later successful
+     * feed clears it. Never a PrivateKey, conf text, user IP, or URL.
+     */
+    val feedError: String? = null,
 )
+
+/**
+ * v3: maps a feed failure to a short user-safe line for the home card.
+ * Only the failure KIND is surfaced (timeout / DNS / HTTP code); the
+ * exception message is used solely when it is exactly "HTTP <code>",
+ * so no URL, host detail, or other message content can leak into UI.
+ */
+fun describeFeedFailure(error: Throwable): String {
+    return when (error) {
+        is java.net.SocketTimeoutException,
+        is kotlinx.coroutines.TimeoutCancellationException ->
+            "Feed timed out — tap Refresh to retry"
+        is java.net.UnknownHostException ->
+            "Feed: network unavailable — tap Refresh to retry"
+        is java.io.IOException -> {
+            val httpCode = Regex("^HTTP (\\d+)$").find(error.message ?: "")
+                ?.groupValues?.getOrNull(1)
+            if (httpCode != null) {
+                "Feed failed (HTTP $httpCode) — tap Refresh to retry"
+            } else {
+                "Feed failed — tap Refresh to retry"
+            }
+        }
+        else -> "Feed failed — tap Refresh to retry"
+    }
+}

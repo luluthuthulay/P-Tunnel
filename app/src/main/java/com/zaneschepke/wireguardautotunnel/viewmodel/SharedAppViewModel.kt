@@ -21,6 +21,7 @@ import com.zaneschepke.wireguardautotunnel.ptunnel.PTunnelConnect
 import com.zaneschepke.wireguardautotunnel.ptunnel.PTunnelConfService
 import com.zaneschepke.wireguardautotunnel.ptunnel.PTunnelDiagnostics
 import com.zaneschepke.wireguardautotunnel.ptunnel.PTunnelFeedService
+import com.zaneschepke.wireguardautotunnel.ptunnel.describeFeedFailure
 import com.zaneschepke.wireguardautotunnel.ptunnel.PTunnelStore
 import com.zaneschepke.wireguardautotunnel.ptunnel.PTunnelUiState
 import com.zaneschepke.wireguardautotunnel.domain.repository.AppStateRepository
@@ -395,7 +396,19 @@ class SharedAppViewModel(
                                 runCatching { PTunnelFeedService.parse(raw).endpoints }
                                     .getOrNull()
                             }.orEmpty()
-                        if (cached.isNotEmpty()) applyPTunnelEndpoints(cached)
+                        if (cached.isNotEmpty()) {
+                            applyPTunnelEndpoints(cached)
+                        } else if (_ptunnelUiState.value.displayedEndpoint == null &&
+                            _ptunnelUiState.value.connectedEndpoint == null
+                        ) {
+                            // v3: no endpoint at all to show (fresh
+                            // install, feed failed) — do not leave only
+                            // the silent "No endpoint yet" text. The
+                            // line is kind-only, never a secret.
+                            updatePTunnel { state ->
+                                state.copy(feedError = describeFeedFailure(error))
+                            }
+                        }
                     }
             }
     }
@@ -438,6 +451,8 @@ class SharedAppViewModel(
                 connectedEndpoint = connected,
                 displayedEndpoint = displayed,
                 manualEndpoint = if (resetManual) null else state.manualEndpoint,
+                // v3: a successful feed resolves any earlier feed error.
+                feedError = null,
             )
         }
     }
@@ -471,6 +486,20 @@ class SharedAppViewModel(
                         // User-initiated, so one non-fatal diagnostic report
                         // (no UI toast) is acceptable; the cache is kept.
                         PTunnelDiagnostics.report(context, "feed-refresh", null, error)
+                        // v3: same visible-error rule as auto-fetch, but
+                        // only when there is no endpoint to show. A
+                        // cached or connected endpoint keeps showing
+                        // exactly as before, with no error line.
+                        val current = _ptunnelUiState.value
+                        if (current.endpoints.isEmpty() &&
+                            current.displayedEndpoint == null &&
+                            current.connectedEndpoint == null &&
+                            !current.isConnecting
+                        ) {
+                            updatePTunnel { state ->
+                                state.copy(feedError = describeFeedFailure(error))
+                            }
+                        }
                     }
             } finally {
                 updatePTunnel { it.copy(isFeedRefreshing = false) }

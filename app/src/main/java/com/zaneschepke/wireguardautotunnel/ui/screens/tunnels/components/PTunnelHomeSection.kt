@@ -102,6 +102,22 @@ fun PTunnelHomeSection(
                             color = AlertRed,
                         )
                     }
+                    // v3: visible feed failure, but ONLY when there is
+                    // no endpoint at all to show. A cached or connected
+                    // endpoint keeps showing exactly as before, and a
+                    // poll failure while connected never sets feedError,
+                    // so this line can never disturb a live tunnel.
+                    // The text is kind-only (timeout / DNS / HTTP code),
+                    // never a PrivateKey, conf text, user IP, or URL.
+                    if (shownEndpoint == null) {
+                        ptunnelState.feedError?.let { feedError ->
+                            Text(
+                                text = feedError,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = AlertRed,
+                            )
+                        }
+                    }
                 }
             },
             expandedContent =
