@@ -779,10 +779,17 @@ class SharedAppViewModel(
 
     /**
      * @param manual true for a user stop (switch-OFF, notification stop,
-     *   tunnel-list stop): sets the auto override and forgets the
-     *   last-connected id. False for the auto observer's no-network
-     *   stop: keeps the stored id and the displayed endpoint, so the
-     *   network-return restart walks from the last-connected endpoint.
+     *   tunnel-list stop): sets the auto override ONLY. It must NOT
+     *   forget the last-connected id (user correction 2026-11-01):
+     *   connected to #3, manual off, then on again (manual or auto)
+     *   must walk from #3 only — and app-clear / process death must
+     *   also restart from #3 — with #4 next in flow order only if
+     *   #3 fails. The old code cleared the store and reset the
+     *   displayed endpoint to #1, which is why a manual off made
+     *   the next auto start walk from #1. False for the auto
+     *   observer's no-network stop: same persistence (keeps the
+     *   stored id and the displayed endpoint, so the network-return
+     *   restart walks from the last-connected endpoint).
      */
     fun stopPTunnel(manual: Boolean = true) {
         ptunnelJob?.cancel()
@@ -794,14 +801,16 @@ class SharedAppViewModel(
         viewModelScope.launch {
             tunnelCoordinator.stopTunnel(PTunnelConnect.PTUNNEL_TUNNEL_ID)
             if (manual) {
-                ptunnelStore.clearConnectedEndpoint()
+                // Persistence fix: keep the stored last-connected id
+                // AND the displayed endpoint (last-connected, e.g. #3)
+                // so the next on — manual or auto — walks from #3.
+                // Only connectedEndpoint clears (UI: disconnected).
                 updatePTunnel { current ->
                     current.copy(
                         connectedEndpoint = null,
                         isConnecting = false,
                         connectingEndpoint = null,
                         manualEndpoint = null,
-                        displayedEndpoint = current.endpoints.firstOrNull(),
                     )
                 }
             } else {

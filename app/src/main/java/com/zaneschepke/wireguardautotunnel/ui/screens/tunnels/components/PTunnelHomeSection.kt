@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Circle
-import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -135,33 +134,10 @@ fun PTunnelHomeSection(
             },
         )
 
-        // v2 #3a: manual Refresh. Re-fetches the feed immediately; when
-        // disconnected it resets a manual cycle to the new JSON #1, when
-        // connected it updates the cache silently only (the live tunnel
-        // and the displayed connected endpoint do not change). No
-        // full-screen spinner: the button is simply disabled while
-        // refreshing, and a failed refresh keeps the old cache silently.
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = stringResource(R.string.ptunnel_refresh_feed),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            IconButton(
-                onClick = { viewModel.refreshPTunnelFeed() },
-                enabled = !ptunnelState.isFeedRefreshing,
-            ) {
-                Icon(
-                    Icons.Rounded.Refresh,
-                    contentDescription = stringResource(R.string.ptunnel_refresh_feed),
-                    modifier = Modifier.size(20.dp),
-                )
-            }
-        }
+        // Home Refresh button REMOVED 2026-11-01 (user decision):
+        // feed still updates via open fetch + 60s foreground poll;
+        // only the manual button goes. refreshPTunnelFeed() stays
+        // in the ViewModel (now unused by UI) — no other logic touched.
 
         // PROVISIONAL placement (see file doc): credit line under the
         // endpoint/stats area on home.
