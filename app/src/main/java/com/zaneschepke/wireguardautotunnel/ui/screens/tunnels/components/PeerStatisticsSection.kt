@@ -10,7 +10,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.wgtunnel.parser.ActivePeer
 import com.zaneschepke.wireguardautotunnel.R
-import com.zaneschepke.wireguardautotunnel.util.extensions.abbreviateKey
 import com.zaneschepke.wireguardautotunnel.util.extensions.toAgoDisplay
 
 @Composable
@@ -24,12 +23,6 @@ fun PeerStatisticsSection(peer: ActivePeer, now: Long) {
     val tx = Formatter.formatFileSize(context, peer.txBytes ?: 0L)
 
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        StatText(
-            text = stringResource(R.string.peer_template, peer.publicKey.abbreviateKey()),
-            style = style,
-            color = color,
-        )
-
         TransferStatsRow(rx = rx, tx = tx, style = style, color = color)
 
         StatText(

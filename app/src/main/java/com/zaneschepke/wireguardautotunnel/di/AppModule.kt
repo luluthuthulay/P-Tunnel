@@ -83,7 +83,7 @@ val appModule = module {
     // TunnelCoordinator is bound in coordinatorModule; Koin resolves
     // singles across modules, and there is no cycle (the handler does
     // not depend on StartupCoordinator).
-    single { PTunnelRestoreHandler(get(), get()) }
+    single { PTunnelRestoreHandler(get(), get(), get(), get()) }
 
     single { FileUtils(androidContext(), get(named(Dispatcher.IO))) }
     single<ShortcutManager> { DynamicShortcutManager(androidContext(), get(named(Dispatcher.IO))) }

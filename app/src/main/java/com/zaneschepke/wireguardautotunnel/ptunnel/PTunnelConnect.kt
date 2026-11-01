@@ -55,4 +55,19 @@ object PTunnelConnect {
             quickConfig = swapEndpoint(baseConf, endpoint),
         )
     }
+
+    /**
+     * Two-pass failover order over [candidates] in JSON order: pass 1
+     * from the [startId] candidate to the end, pass 2 the whole list
+     * once more. Success at any attempt stops the walk at once; the
+     * second pass ending with no success stops, never wraps again.
+     * A missing or unknown [startId] starts from JSON #1. Shared by the
+     * ViewModel walk and the boot walk so the order can never diverge.
+     */
+    fun orderedWalk(candidates: List<EndpointInfo>, startId: String?): List<EndpointInfo> {
+        val startIndex =
+            startId?.let { wanted -> candidates.indexOfFirst { it.id == wanted } }
+                ?.takeIf { it >= 0 } ?: 0
+        return candidates.subList(startIndex, candidates.size) + candidates
+    }
 }

@@ -69,7 +69,7 @@ class AndroidNotificationService(override val context: Context) : NotificationSe
                 setOnlyAlertOnce(onlyAlertOnce)
                 setOngoing(onGoing)
                 setShowWhen(showTimestamp)
-                setSmallIcon(R.drawable.qs_logo)
+                setSmallIcon(R.drawable.ic_noti_shield)
                 if (color != null) {
                     setColor(color)
                 }
@@ -109,7 +109,7 @@ class AndroidNotificationService(override val context: Context) : NotificationSe
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
         return Action.Builder(
-                R.drawable.qs_logo,
+                R.drawable.ic_noti_shield,
                 notificationAction.title(context),
                 pendingIntent,
             )
@@ -149,7 +149,7 @@ class AndroidNotificationService(override val context: Context) : NotificationSe
             )
         val updateAction =
             Action.Builder(
-                    R.drawable.qs_logo,
+                    R.drawable.ic_noti_shield,
                     context.getString(R.string.update),
                     openIntent,
                 )
@@ -159,7 +159,7 @@ class AndroidNotificationService(override val context: Context) : NotificationSe
                 .setContentTitle(context.getString(R.string.update_available))
                 .setContentText(context.getString(R.string.update_notification_message, version))
                 .setContentIntent(openIntent)
-                .setSmallIcon(R.drawable.qs_logo)
+                .setSmallIcon(R.drawable.ic_noti_shield)
                 .setAutoCancel(true)
                 .setOnlyAlertOnce(true)
                 .addAction(updateAction)
@@ -180,7 +180,7 @@ class AndroidNotificationService(override val context: Context) : NotificationSe
                 .setContentTitle(context.getString(R.string.update_ready_to_install))
                 .setContentText(context.getString(R.string.update_ready_message))
                 .setContentIntent(installIntent)
-                .setSmallIcon(R.drawable.qs_logo)
+                .setSmallIcon(R.drawable.ic_noti_shield)
                 .setAutoCancel(true)
                 .setOnlyAlertOnce(true)
                 .build()
@@ -204,7 +204,7 @@ class AndroidNotificationService(override val context: Context) : NotificationSe
             NotificationChannels.App.asBuilder()
                 .setContentTitle(context.getString(R.string.update_download_failed))
                 .setContentIntent(openIntent)
-                .setSmallIcon(R.drawable.qs_logo)
+                .setSmallIcon(R.drawable.ic_noti_shield)
                 .setAutoCancel(true)
                 .setOnlyAlertOnce(true)
                 .build()

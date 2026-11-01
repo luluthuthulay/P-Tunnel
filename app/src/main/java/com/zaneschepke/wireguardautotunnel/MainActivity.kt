@@ -32,7 +32,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Celebration
 import androidx.compose.material.icons.outlined.CheckCircleOutline
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.FavoriteBorder
@@ -535,18 +534,6 @@ class MainActivity : AppCompatActivity() {
                                             navController.push(Route.Donate)
                                         },
                                     ),
-                            )
-                        }
-                    }
-
-                    LaunchedEffect(Unit) {
-                        if (!uiState.isDesktopPromptShown) {
-                            viewModel.setDesktopPromptShown(true)
-                            toaster.show(
-                                message = context.getString(R.string.desktop_prompt_message),
-                                icon = Icons.Outlined.Celebration,
-                                type = ToastType.Normal,
-                                duration = 10_000L.milliseconds,
                             )
                         }
                     }

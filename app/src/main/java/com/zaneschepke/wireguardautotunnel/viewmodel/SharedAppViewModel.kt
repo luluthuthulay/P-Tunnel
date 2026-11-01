@@ -9,6 +9,8 @@ import java.util.concurrent.TimeoutException
 import com.dokar.sonner.ToastType
 import com.wgtunnel.parser.Config
 import com.wgtunnel.parser.ConfigParseException
+import com.zaneschepke.networkmonitor.ActiveNetwork
+import com.zaneschepke.networkmonitor.StableNetworkEngine
 import com.zaneschepke.wireguardautotunnel.R
 import com.zaneschepke.wireguardautotunnel.core.orchestration.AutoTunnelCoordinator
 import com.zaneschepke.wireguardautotunnel.core.orchestration.TunnelBackendCoordinator
@@ -24,7 +26,9 @@ import com.zaneschepke.wireguardautotunnel.ptunnel.PTunnelFeedService
 import com.zaneschepke.wireguardautotunnel.ptunnel.describeFeedFailure
 import com.zaneschepke.wireguardautotunnel.ptunnel.PTunnelStore
 import com.zaneschepke.wireguardautotunnel.ptunnel.PTunnelUiState
+import com.zaneschepke.wireguardautotunnel.ptunnel.PTunnelWalkGuard
 import com.zaneschepke.wireguardautotunnel.domain.repository.AppStateRepository
+import com.zaneschepke.wireguardautotunnel.domain.repository.AutoTunnelSettingsRepository
 import com.zaneschepke.wireguardautotunnel.domain.repository.GeneralSettingRepository
 import com.zaneschepke.wireguardautotunnel.domain.repository.GlobalEffectRepository
 import com.zaneschepke.wireguardautotunnel.domain.repository.SelectedTunnelsRepository
@@ -78,10 +82,12 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
@@ -100,6 +106,8 @@ class SharedAppViewModel(
     private val tunnelGroupRepository: TunnelGroupRepository,
     private val settingsRepository: GeneralSettingRepository,
     private val autoTunnelStateHolder: AutoTunnelStateHolder,
+    private val autoTunnelSettingsRepository: AutoTunnelSettingsRepository,
+    private val stableNetworkEngine: StableNetworkEngine,
     private val selectedTunnelsRepository: SelectedTunnelsRepository,
     private val tunnelBackendCoordinator: TunnelBackendCoordinator,
     private val httpClient: HttpClient,
@@ -253,6 +261,110 @@ class SharedAppViewModel(
                         if (hasActiveTunnel) pingLatencies.value = emptyMap()
                     }
             }
+            intent {
+                // P-Tunnel deadlock fix: when the backend loses the
+                // transient tunnel outside stopPTunnel() (AutoTunnel
+                // reconciler stop, startExclusive, ...), free the
+                // start/cycle guards at once instead of waiting for
+                // the next feed poll. Memory only: the stored id stays
+                // as reopen-start/display history.
+                tunnelCoordinator.backendStatus
+                    .map {
+                        it.activeTunnels.containsKey(PTunnelConnect.PTUNNEL_TUNNEL_ID)
+                    }
+                    .distinctUntilChanged()
+                    .collect { hasPTunnel ->
+                        if (!hasPTunnel) {
+                            val s = _ptunnelUiState.value
+                            if (s.connectedEndpoint != null && !s.isConnecting &&
+                                ptunnelJob?.isActive != true
+                            ) {
+                                updatePTunnel { it.copy(connectedEndpoint = null) }
+                            }
+                        }
+                    }
+            }
+            intent {
+                // P-Tunnel auto: WG flow, P-Tunnel endpoints only. The
+                // WGAT reconciler cannot drive the transient tunnel
+                // (it only knows stored tunnels), so this observer
+                // drives -1 from the SAME AutoTunnel settings the user
+                // toggled: per-network on/off, stop on no internet,
+                // manual override until the network type changes.
+                // It fires on changes only (distinct key, 1 s
+                // debounce), never on a steady state, so a walk that
+                // exhausted both passes is never retried in a loop.
+                // Auto never requests VPN permission itself: if it is
+                // missing, the user must connect manually once.
+                combine(
+                        autoTunnelSettingsRepository.flow,
+                        stableNetworkEngine.stableState.mapNotNull { it?.state },
+                        tunnelCoordinator.backendStatus,
+                        _ptunnelUiState,
+                    ) { settings, connectivity, backend, pt ->
+                        val networkType =
+                            when (connectivity.activeNetwork) {
+                                is ActiveNetwork.Wifi -> "Wifi"
+                                is ActiveNetwork.Cellular -> "Cellular"
+                                is ActiveNetwork.Ethernet -> "Ethernet"
+                                is ActiveNetwork.Disconnected -> "Disconnected"
+                            }
+                        PTunnelAutoKey(
+                            networkType = networkType,
+                            autoEnabled = settings.isAutoTunnelEnabled,
+                            wifiEnabled = settings.isTunnelOnWifiEnabled,
+                            mobileEnabled = settings.isTunnelOnMobileDataEnabled,
+                            ethernetEnabled = settings.isTunnelOnEthernetEnabled,
+                            stopOnNoInternet = settings.isStopOnNoInternetEnabled,
+                            backendHasPTunnel =
+                                backend.activeTunnels.containsKey(
+                                    PTunnelConnect.PTUNNEL_TUNNEL_ID
+                                ),
+                            endpointsEmpty = pt.endpoints.isEmpty(),
+                            isConnecting = pt.isConnecting,
+                            connected = pt.connectedEndpoint != null,
+                        )
+                    }
+                    .distinctUntilChanged()
+                    .debounce(1_000L)
+                    .collect { key ->
+                        if (key.networkType != ptunnelLastAutoNetworkType) {
+                            ptunnelAutoManualOverride = false
+                            ptunnelLastAutoNetworkType = key.networkType
+                        }
+                        if (ptunnelJob?.isActive == true || key.isConnecting) return@collect
+                        if (PTunnelWalkGuard.exhausted) return@collect
+                        if (!serviceManager.hasVpnPermission()) return@collect
+                        val autoForType =
+                            key.autoEnabled &&
+                                when (key.networkType) {
+                                    "Wifi" -> key.wifiEnabled
+                                    "Cellular" -> key.mobileEnabled
+                                    "Ethernet" -> key.ethernetEnabled
+                                    else -> false
+                                }
+                        if (key.backendHasPTunnel) {
+                            // Tunnel up: stop it only when it is an AUTO
+                            // tunnel and the network is gone with
+                            // stop-on-no-internet on. A manual tunnel is
+                            // never touched by the observer.
+                            if (ptunnelAutoStarted && key.networkType == "Disconnected" &&
+                                key.stopOnNoInternet
+                            ) {
+                                stopPTunnel(manual = false)
+                            }
+                            return@collect
+                        }
+                        // Tunnel down: start only when this network type
+                        // is auto-enabled, no manual override stands, and
+                        // there is a feed to walk.
+                        if (!autoForType) return@collect
+                        if (ptunnelAutoManualOverride) return@collect
+                        if (key.endpointsEmpty) return@collect
+                        startPTunnel()
+                        ptunnelAutoStarted = true
+                    }
+            }
         }
 
     fun startTunnel(tunnelConfig: TunnelConfig) = intent {
@@ -351,6 +463,33 @@ class SharedAppViewModel(
      */
     private var pendingPTunnelCandidates: List<EndpointInfo>? = null
 
+    /**
+     * P-Tunnel auto (WG flow, P-Tunnel endpoints only). The observer
+     * reacts to CHANGES (network type, settings, backend -1 presence,
+     * feed arrival) — never to a steady state — so a walk that
+     * exhausted both passes is never retried in a loop.
+     */
+    /** Manual switch-OFF override: blocks auto-start until the network type changes. */
+    private var ptunnelAutoManualOverride: Boolean = false
+    /** True only while the current -1 tunnel was started by the auto observer. */
+    private var ptunnelAutoStarted: Boolean = false
+    /** Network type of the last observer evaluation, for override clearing. */
+    private var ptunnelLastAutoNetworkType: String? = null
+
+    /** Decision-relevant snapshot for the auto observer's distinct key. */
+    private data class PTunnelAutoKey(
+        val networkType: String,
+        val autoEnabled: Boolean,
+        val wifiEnabled: Boolean,
+        val mobileEnabled: Boolean,
+        val ethernetEnabled: Boolean,
+        val stopOnNoInternet: Boolean,
+        val backendHasPTunnel: Boolean,
+        val endpointsEmpty: Boolean,
+        val isConnecting: Boolean,
+        val connected: Boolean,
+    )
+
     private fun ptunnelContext() = ptunnelStore.appContext
 
     private fun updatePTunnel(transform: (PTunnelUiState) -> PTunnelUiState) {
@@ -425,6 +564,13 @@ class SharedAppViewModel(
      *   next connect; otherwise the displayed candidate is JSON #1.
      * A manual choice is in-memory only, so app reopen (new ViewModel)
      * naturally resets it to JSON #1.
+     * Deadlock fix: a stored id resurrects `connectedEndpoint` ONLY
+     * while the backend actually has the transient tunnel up. When the
+     * backend lost it outside stopPTunnel() (AutoTunnel reconciler
+     * stop, startExclusive, ...), the stored id is display/start
+     * history only — it must never re-arm the start/cycle guards.
+     * On reopen it is therefore SHOWN (not connected), so the next
+     * switch-ON starts the walk from it.
      */
     private suspend fun applyPTunnelEndpoints(
         endpoints: List<EndpointInfo>,
@@ -432,9 +578,16 @@ class SharedAppViewModel(
     ) {
         val storedConnectedId = ptunnelStore.getConnectedEndpoint()
         val current = _ptunnelUiState.value
+        val backendHasPTunnel =
+            tunnelCoordinator.backendStatus.value.activeTunnels
+                .containsKey(PTunnelConnect.PTUNNEL_TUNNEL_ID)
+        val storedEndpoint = endpoints.firstOrNull { it.id == storedConnectedId }
         val connected =
-            current.connectedEndpoint
-                ?: endpoints.firstOrNull { it.id == storedConnectedId }
+            if (backendHasPTunnel) {
+                current.connectedEndpoint ?: storedEndpoint
+            } else {
+                null
+            }
         val displayed =
             when {
                 connected != null -> connected
@@ -443,6 +596,7 @@ class SharedAppViewModel(
                 current.manualEndpoint != null &&
                     endpoints.any { it.id == current.manualEndpoint.id } ->
                     current.manualEndpoint
+                storedEndpoint != null -> storedEndpoint
                 else -> endpoints.firstOrNull()
             }
         updatePTunnel { state ->
@@ -519,7 +673,13 @@ class SharedAppViewModel(
         val current = _ptunnelUiState.value
         if (current.connectedEndpoint != null || current.isConnecting) return
         if (ptunnelJob?.isActive == true) return
-        val candidates = current.endpoints.take(3)
+        // A live transient tunnel also blocks cycling even if the
+        // in-memory connected endpoint was just cleared (see the
+        // backend-death intent): the card shows the live tunnel.
+        if (tunnelCoordinator.backendStatus.value.activeTunnels
+                .containsKey(PTunnelConnect.PTUNNEL_TUNNEL_ID)
+        ) return
+        val candidates = current.endpoints
         if (candidates.size < 2) return
         val currentIndex =
             current.displayedEndpoint?.let { shown ->
@@ -573,19 +733,36 @@ class SharedAppViewModel(
     }
 
     fun togglePTunnel(checked: Boolean) {
-        if (checked) startPTunnel() else stopPTunnel()
+        if (checked) {
+            // Manual ON clears the auto blocks: a fresh manual connect
+            // always runs, even after an exhausted walk or a manual OFF.
+            ptunnelAutoManualOverride = false
+            PTunnelWalkGuard.exhausted = false
+            ptunnelAutoStarted = false
+            startPTunnel()
+        } else {
+            stopPTunnel()
+        }
     }
 
     /**
-     * Switch-ON: failover over a SNAPSHOT of the top 3 candidates, one at
-     * a time (v2). A manual cycle, if present, is the first candidate and
-     * is consumed here (cleared) — it is one-time for this connect only.
-     * Polling may update the StateFlow list afterwards, but the local
-     * snapshot in [runPTunnelConnect] never changes mid-failover.
+     * Switch-ON: failover over a SNAPSHOT of the full cached list, one at
+     * a time, in two passes (see [runPTunnelConnect]). A manual cycle, if
+     * present, is the first candidate and is consumed here (cleared) — it
+     * is one-time for this connect only. Otherwise the walk starts from
+     * the displayed endpoint (reopen: last-connected). Polling may update
+     * the StateFlow list afterwards, but the local snapshot in
+     * [runPTunnelConnect] never changes mid-failover.
      */
     fun startPTunnel() {
         if (ptunnelJob?.isActive == true) return
         if (_ptunnelUiState.value.connectedEndpoint != null) return
+        if (tunnelCoordinator.backendStatus.value.activeTunnels
+                .containsKey(PTunnelConnect.PTUNNEL_TUNNEL_ID)
+        ) return
+        // A boot walk already running owns the tunnel; do not clear the
+        // manual choice for a walk that cannot run.
+        if (PTunnelWalkGuard.isBusy) return
         pendingPTunnelCandidate = null
         pendingPTunnelCandidates = null
         val manual = _ptunnelUiState.value.manualEndpoint
@@ -600,27 +777,50 @@ class SharedAppViewModel(
             viewModelScope.launch { runPTunnelConnect(fromCandidate = pendingPTunnelCandidate) }
     }
 
-    fun stopPTunnel() {
+    /**
+     * @param manual true for a user stop (switch-OFF, notification stop,
+     *   tunnel-list stop): sets the auto override and forgets the
+     *   last-connected id. False for the auto observer's no-network
+     *   stop: keeps the stored id and the displayed endpoint, so the
+     *   network-return restart walks from the last-connected endpoint.
+     */
+    fun stopPTunnel(manual: Boolean = true) {
         ptunnelJob?.cancel()
         ptunnelJob = null
         pendingPTunnelCandidate = null
         pendingPTunnelCandidates = null
+        ptunnelAutoStarted = false
+        if (manual) ptunnelAutoManualOverride = true
         viewModelScope.launch {
             tunnelCoordinator.stopTunnel(PTunnelConnect.PTUNNEL_TUNNEL_ID)
-            ptunnelStore.clearConnectedEndpoint()
-            updatePTunnel { current ->
-                current.copy(
-                    connectedEndpoint = null,
-                    isConnecting = false,
-                    connectingEndpoint = null,
-                    manualEndpoint = null,
-                    displayedEndpoint = current.endpoints.firstOrNull(),
-                )
+            if (manual) {
+                ptunnelStore.clearConnectedEndpoint()
+                updatePTunnel { current ->
+                    current.copy(
+                        connectedEndpoint = null,
+                        isConnecting = false,
+                        connectingEndpoint = null,
+                        manualEndpoint = null,
+                        displayedEndpoint = current.endpoints.firstOrNull(),
+                    )
+                }
+            } else {
+                updatePTunnel { current ->
+                    current.copy(
+                        connectedEndpoint = null,
+                        isConnecting = false,
+                        connectingEndpoint = null,
+                        manualEndpoint = null,
+                    )
+                }
             }
         }
     }
 
     private suspend fun runPTunnelConnect(fromCandidate: EndpointInfo?) {
+        // Single-walk ownership app-wide: a boot walk already running owns
+        // the tunnel; this walk skips instead of fighting it via startExclusive.
+        if (!PTunnelWalkGuard.tryAcquire()) return
         val context = ptunnelContext()
         updatePTunnel { it.copy(isConnecting = true, lastError = null) }
         try {
@@ -649,7 +849,7 @@ class SharedAppViewModel(
 
             // Failover candidates are a SNAPSHOT (v2): either the snapshot
             // saved when this connect first started (so a permission-resume
-            // keeps the same order), or the top 3 in JSON order right now.
+            // keeps the same order), or the full list in JSON order right now.
             // Polling updates the StateFlow list, never this local list.
             var endpoints = pendingPTunnelCandidates ?: _ptunnelUiState.value.endpoints
             if (endpoints.isEmpty()) {
@@ -678,15 +878,21 @@ class SharedAppViewModel(
                 return
             }
 
-            // Failover candidates are the top 3 in JSON order, per spec.
-            val candidates = endpoints.take(3)
+            // Failover candidates are the FULL cached list in JSON order
+            // (never top 3). Two passes: pass 1 from the start candidate
+            // to the end, pass 2 the whole list once more. Success at any
+            // attempt stops the walk at once; the second pass ending with
+            // no success stops, never wraps again. The start candidate is
+            // the manual cycle choice, else the pending permission
+            // candidate, else the displayed endpoint (reopen:
+            // last-connected), else JSON #1.
+            val candidates = endpoints
             pendingPTunnelCandidates = candidates
-            val startIndex =
-                fromCandidate?.let { wanted -> candidates.indexOfFirst { it.id == wanted.id } }
-                    ?.takeIf { it >= 0 } ?: 0
+            val startCandidate =
+                fromCandidate ?: _ptunnelUiState.value.displayedEndpoint
+            val ordered = PTunnelConnect.orderedWalk(candidates, startCandidate?.id)
 
-            for (index in startIndex until candidates.size) {
-                val candidate = candidates[index]
+            for (candidate in ordered) {
                 updatePTunnel { it.copy(connectingEndpoint = candidate) }
                 val config =
                     try {
@@ -750,11 +956,15 @@ class SharedAppViewModel(
             }
 
             pendingPTunnelCandidates = null
+            // Both passes exhausted: STOP, stay stopped until a manual
+            // ON (the auto observer never restarts an exhausted walk).
+            PTunnelWalkGuard.exhausted = true
+            ptunnelAutoStarted = false
             updatePTunnel {
                 it.copy(
                     isConnecting = false,
                     connectingEndpoint = null,
-                    lastError = "No working endpoint found",
+                    lastError = "endpoint not working",
                 )
             }
         } finally {
@@ -764,6 +974,7 @@ class SharedAppViewModel(
             // denial leaves the card clean instead of stuck on "connecting".
             // This does not clear connectedEndpoint/displayedEndpoint.
             updatePTunnel { it.copy(isConnecting = false, connectingEndpoint = null) }
+            PTunnelWalkGuard.release()
         }
     }
 

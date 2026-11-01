@@ -35,6 +35,12 @@ class StartupCoordinator(
         if (shouldRestoreAutoTunnel) {
             Timber.d("Boot policy: restoring auto-tunnel")
             autoTunnelCoordinator.start()
+            // P-Tunnel boot auto (WG-style): the service cannot drive
+            // the transient tunnel, so the boot walk runs here too —
+            // last-connected first, two passes, once internet is usable.
+            // The service holds the process foreground, so the network
+            // wait + walk survive boot.
+            ptunnelRestoreHandler.tryBootAuto()
             return@runCatching
         }
 
@@ -92,6 +98,10 @@ class StartupCoordinator(
         if (autoTunnelCoordinator.isEnabled()) {
             Timber.d("$reason: resuming auto-tunnel")
             autoTunnelCoordinator.start()
+            // Same P-Tunnel boot auto as the boot branch: a sticky /
+            // package-replace restart with AutoTunnel on must also
+            // reconnect the last-connected endpoint, not just the service.
+            ptunnelRestoreHandler.tryBootAuto()
             return@runCatching
         }
 
