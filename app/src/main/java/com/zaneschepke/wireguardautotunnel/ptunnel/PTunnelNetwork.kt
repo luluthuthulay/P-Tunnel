@@ -9,6 +9,8 @@ import java.net.HttpURLConnection
 import java.net.SocketTimeoutException
 import java.net.URL
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
@@ -187,39 +189,45 @@ object PTunnelNetwork {
         readTimeoutMs: Int,
         callTimeoutMs: Long,
     ): Result<String> {
-        return try {
-            val body = withTimeoutOrNull(callTimeoutMs) {
-                val connection =
-                    if (network != null) {
-                        network.openConnection(URL(urlString)) as HttpURLConnection
-                    } else {
-                        URL(urlString).openConnection() as HttpURLConnection
+        // FIX (2026-11-01): blocking HttpURLConnection I/O runs on
+        // Dispatchers.IO. Callers run on viewModelScope (Main), so without
+        // this Android throws NetworkOnMainThreadException and EVERY
+        // feed/conf fetch fails, bound and unbound alike.
+        return withContext(Dispatchers.IO) {
+            try {
+                val body = withTimeoutOrNull(callTimeoutMs) {
+                    val connection =
+                        if (network != null) {
+                            network.openConnection(URL(urlString)) as HttpURLConnection
+                        } else {
+                            URL(urlString).openConnection() as HttpURLConnection
+                        }
+                    try {
+                        connection.requestMethod = "GET"
+                        connection.setRequestProperty("User-Agent", userAgent)
+                        connection.setRequestProperty("Cache-Control", "no-cache")
+                        connection.connectTimeout = connectTimeoutMs
+                        connection.readTimeout = readTimeoutMs
+                        connection.useCaches = false
+                        val code = connection.responseCode
+                        if (code !in 200..299) {
+                            throw IOException("HTTP $code")
+                        }
+                        connection.inputStream.bufferedReader().use { it.readText() }
+                    } finally {
+                        connection.disconnect()
                     }
-                try {
-                    connection.requestMethod = "GET"
-                    connection.setRequestProperty("User-Agent", userAgent)
-                    connection.setRequestProperty("Cache-Control", "no-cache")
-                    connection.connectTimeout = connectTimeoutMs
-                    connection.readTimeout = readTimeoutMs
-                    connection.useCaches = false
-                    val code = connection.responseCode
-                    if (code !in 200..299) {
-                        throw IOException("HTTP $code")
-                    }
-                    connection.inputStream.bufferedReader().use { it.readText() }
-                } finally {
-                    connection.disconnect()
-                }
-            } ?: return Result.failure(
-                SocketTimeoutException("call timed out after ${callTimeoutMs}ms"),
-            )
-            Result.success(body)
-        } catch (e: CancellationException) {
-            // Parent cancellation (e.g. ViewModel cleared): never swallow
-            // it into a fallback attempt.
-            throw e
-        } catch (e: Exception) {
-            Result.failure(e)
+                } ?: return@withContext Result.failure(
+                    SocketTimeoutException("call timed out after ${callTimeoutMs}ms"),
+                )
+                Result.success(body)
+            } catch (e: CancellationException) {
+                // Parent cancellation (e.g. ViewModel cleared): never swallow
+                // it into a fallback attempt.
+                throw e
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
         }
     }
 }
