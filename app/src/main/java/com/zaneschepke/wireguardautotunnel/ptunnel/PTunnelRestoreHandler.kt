@@ -138,7 +138,7 @@ class PTunnelRestoreHandler(
             val usable =
                 withTimeoutOrNull(BOOT_NETWORK_WAIT_MS) {
                     stableNetworkEngine.stableState.mapNotNull { it?.state }
-                        .first { it.hasUsableNetwork }
+                        .first { it.hasUsableNetwork() }
                 }
             if (usable == null) {
                 val endpoint = parseStoredEndpoint(storedId) ?: return false
