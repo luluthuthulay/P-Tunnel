@@ -205,6 +205,7 @@ class AutoTunnelService : LifecycleService() {
                     }
                 PTunnelServiceAutoKey(
                     networkType = networkType,
+                    hasUsableNetwork = connectivity.hasUsableNetwork(),
                     autoEnabled = settings.isAutoTunnelEnabled,
                     wifiEnabled = settings.isTunnelOnWifiEnabled,
                     mobileEnabled = settings.isTunnelOnMobileDataEnabled,
@@ -234,7 +235,14 @@ class AutoTunnelService : LifecycleService() {
                             else -> false
                         }
                 if (key.backendHasPTunnel) {
-                    if (key.networkType == "Disconnected" && key.stopOnNoInternet) {
+                    // Same stop-signal fix as the ViewModel observer
+                    // (2026-11-02): stop on NO USABLE INTERNET, not on
+                    // the Disconnected type — with VPN up the WG engine
+                    // keeps reporting a cached Wifi / present Cellular
+                    // type with Wi-Fi and data both off, so the type
+                    // never became Disconnected and the tunnel never
+                    // stopped. WG's reconciler watches usable, not type.
+                    if (!key.hasUsableNetwork && key.stopOnNoInternet) {
                         tunnelCoordinator.stopTunnel(
                             PTunnelConnect.PTUNNEL_TUNNEL_ID,
                             TunnelActionSource.AUTO_TUNNEL,
@@ -255,6 +263,7 @@ class AutoTunnelService : LifecycleService() {
 
     private data class PTunnelServiceAutoKey(
         val networkType: String,
+        val hasUsableNetwork: Boolean,
         val autoEnabled: Boolean,
         val wifiEnabled: Boolean,
         val mobileEnabled: Boolean,

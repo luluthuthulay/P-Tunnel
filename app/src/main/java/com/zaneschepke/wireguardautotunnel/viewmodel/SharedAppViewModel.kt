@@ -311,6 +311,7 @@ class SharedAppViewModel(
                             }
                         PTunnelAutoKey(
                             networkType = networkType,
+                            hasUsableNetwork = connectivity.hasUsableNetwork(),
                             autoEnabled = settings.isAutoTunnelEnabled,
                             wifiEnabled = settings.isTunnelOnWifiEnabled,
                             mobileEnabled = settings.isTunnelOnMobileDataEnabled,
@@ -344,19 +345,27 @@ class SharedAppViewModel(
                                     else -> false
                                 }
                         if (key.backendHasPTunnel) {
-                            // Tunnel up: WG Tunnel flow (user 2026-11-01).
-                            // When the network is gone and
-                            // stop-on-no-internet is on, the tunnel
-                            // stops no matter who started it — auto,
-                            // manual toggle, or boot auto. The old
-                            // ptunnelAutoStarted gate meant manual and
-                            // boot-auto tunnels never auto-stopped, so
-                            // turning Wi-Fi/data off left the VPN up.
+                            // Tunnel up: WG Tunnel flow (user 2026-11-01,
+                            // stop-signal fix 2026-11-02). Stop when
+                            // there is NO USABLE INTERNET and
+                            // stop-on-no-internet is on, no matter who
+                            // started the tunnel — auto, manual toggle,
+                            // or boot auto. The old condition watched
+                            // the network TYPE (== "Disconnected"), but
+                            // with VPN up the WG engine keeps reporting
+                            // a cached Wifi / present Cellular type even
+                            // with Wi-Fi and data both off (VPN is the
+                            // default network, so neither entry is
+                            // dropped) — the type never became
+                            // Disconnected, so the tunnel never stopped.
+                            // WG's own reconciler watches hasUsableNetwork
+                            // instead, and so does this branch now.
+                            // (Disconnected implies !hasUsableNetwork,
+                            // so the old case is subsumed.)
                             // stopPTunnel(manual=false) keeps the stored
                             // last-connected id, so the network-return
-                            // restart walks from it. (ptunnelAutoStarted
-                            // is kept for the start branch only.)
-                            if (key.networkType == "Disconnected" &&
+                            // restart walks from it.
+                            if (!key.hasUsableNetwork &&
                                 key.stopOnNoInternet
                             ) {
                                 stopPTunnel(manual = false)
@@ -483,6 +492,7 @@ class SharedAppViewModel(
     /** Decision-relevant snapshot for the auto observer's distinct key. */
     private data class PTunnelAutoKey(
         val networkType: String,
+        val hasUsableNetwork: Boolean,
         val autoEnabled: Boolean,
         val wifiEnabled: Boolean,
         val mobileEnabled: Boolean,
