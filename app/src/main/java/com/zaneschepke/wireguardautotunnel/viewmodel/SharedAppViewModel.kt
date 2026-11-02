@@ -959,7 +959,19 @@ class SharedAppViewModel(
                 }?.takeIf { it >= 0 }?.let { candidates.size - it }
                     ?: candidates.size
 
-            for ((attemptIndex, candidate) in ordered.withIndex()) {
+            // Skip-stuck (user 2026-11-02): within each pass, try
+            // fresh endpoints before ones that failed recently.
+            // Segment lengths stay the same, so pass1Count and the
+            // two-speed timeouts still line up with the passes.
+            // (Stuck marking from THIS walk applies to later walks;
+            // pass 2 still retries pass-1 failures at full timeout.)
+            val orderedStuckLast =
+                PTunnelWalkGuard.reorderStuckLast(ordered.subList(0, pass1Count)) +
+                    PTunnelWalkGuard.reorderStuckLast(
+                        ordered.subList(pass1Count, ordered.size)
+                    )
+
+            for ((attemptIndex, candidate) in orderedStuckLast.withIndex()) {
                 val handshakeTimeoutMs =
                     if (attemptIndex < pass1Count) {
                         PTUNNEL_HANDSHAKE_TIMEOUT_QUICK_MS
@@ -1005,6 +1017,7 @@ class SharedAppViewModel(
                 if (awaitPTunnelHandshake(candidate, handshakeTimeoutMs)) {
                     pendingPTunnelCandidate = null
                     pendingPTunnelCandidates = null
+                    PTunnelWalkGuard.clearStuck(candidate.id)
                     ptunnelStore.saveConnectedEndpoint(candidate.id)
                     updatePTunnel {
                         it.copy(
@@ -1019,6 +1032,7 @@ class SharedAppViewModel(
                 }
                 // Handshake failed: bring this attempt fully DOWN, then try next.
                 tunnelCoordinator.stopTunnel(PTunnelConnect.PTUNNEL_TUNNEL_ID)
+                PTunnelWalkGuard.markStuck(candidate.id)
                 PTunnelDiagnostics.report(
                     context,
                     "connect",

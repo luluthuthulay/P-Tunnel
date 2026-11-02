@@ -183,7 +183,14 @@ class PTunnelRestoreHandler(
             // storedId null (never connected) → orderedWalk starts at
             // feed #1 by definition; storedId present → last-connected
             // first, as before.
-            val ordered = PTunnelConnect.orderedWalk(candidates, storedId)
+            // Skip-stuck (user 2026-11-02): fresh endpoints before
+            // ones that failed recently (5-min window, shared with
+            // the ViewModel walk via PTunnelWalkGuard). Stuck ones
+            // are deprioritized, never dropped.
+            val ordered =
+                PTunnelWalkGuard.reorderStuckLast(
+                    PTunnelConnect.orderedWalk(candidates, storedId)
+                )
             val context = ptunnelStore.appContext
             for (candidate in ordered) {
                 val config =
@@ -195,11 +202,13 @@ class PTunnelRestoreHandler(
                     }
                 tunnelCoordinator.startTunnel(config)
                 if (awaitBootHandshake()) {
+                    PTunnelWalkGuard.clearStuck(candidate.id)
                     ptunnelStore.saveConnectedEndpoint(candidate.id)
                     Timber.d("P-Tunnel boot auto: connected ${candidate.id}")
                     return true
                 }
                 tunnelCoordinator.stopTunnel(PTunnelConnect.PTUNNEL_TUNNEL_ID)
+                PTunnelWalkGuard.markStuck(candidate.id)
                 PTunnelDiagnostics.report(
                     context,
                     "connect",

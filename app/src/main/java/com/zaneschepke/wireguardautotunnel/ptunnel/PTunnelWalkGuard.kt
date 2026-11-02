@@ -1,5 +1,6 @@
 package com.zaneschepke.wireguardautotunnel.ptunnel
 
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -47,4 +48,48 @@ object PTunnelWalkGuard {
     fun release() {
         busy.set(false)
     }
+
+    /**
+     * Skip-stuck memory (user 2026-11-02: no long waits for
+     * Connected). A handshake failure marks the endpoint stuck for
+     * [STUCK_WINDOW_MS]; later walks try fresh endpoints before
+     * stuck ones, so a walk never pays the full timeout on a
+     * known-stuck endpoint before trying fresh ones. In-memory only
+     * (per process), like [exhausted]: a fresh process retries
+     * everything, which is safe — stuck is a speed hint, never a
+     * ban. Connecting clears the entry: a connected endpoint is
+     * by definition not stuck.
+     */
+    private val stuckUntilMs = ConcurrentHashMap<String, Long>()
+
+    fun markStuck(id: String) {
+        stuckUntilMs[id] = System.currentTimeMillis() + STUCK_WINDOW_MS
+    }
+
+    fun clearStuck(id: String) {
+        stuckUntilMs.remove(id)
+    }
+
+    /** True while the endpoint is inside its stuck window; expired entries drop. */
+    fun isStuck(id: String): Boolean {
+        val until = stuckUntilMs[id] ?: return false
+        if (System.currentTimeMillis() >= until) {
+            stuckUntilMs.remove(id)
+            return false
+        }
+        return true
+    }
+
+    /**
+     * Stable reorder: non-stuck first, stuck last, original order
+     * kept inside each group. Stuck endpoints are NOT dropped — if
+     * every candidate is stuck they are still tried, in order —
+     * they are only deprioritized.
+     */
+    fun reorderStuckLast(candidates: List<EndpointInfo>): List<EndpointInfo> {
+        val (stuck, fresh) = candidates.partition { isStuck(it.id) }
+        return fresh + stuck
+    }
+
+    private const val STUCK_WINDOW_MS = 5 * 60 * 1000L
 }
