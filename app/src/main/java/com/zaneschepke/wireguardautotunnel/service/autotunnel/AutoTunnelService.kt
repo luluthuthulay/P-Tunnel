@@ -26,6 +26,7 @@ import com.zaneschepke.wireguardautotunnel.notification.AndroidNotificationServi
 import com.zaneschepke.wireguardautotunnel.notification.NotificationService
 import com.zaneschepke.wireguardautotunnel.ptunnel.PTunnelConnect
 import com.zaneschepke.wireguardautotunnel.ptunnel.PTunnelRestoreHandler
+import com.zaneschepke.wireguardautotunnel.ptunnel.PTunnelUnderlyingNetwork
 import com.zaneschepke.wireguardautotunnel.ptunnel.PTunnelWalkGuard
 import com.zaneschepke.wireguardautotunnel.service.ServiceManager
 import com.zaneschepke.wireguardautotunnel.service.tile.AutoTunnelTileRefresher
@@ -37,11 +38,13 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.launch
@@ -161,6 +164,7 @@ class AutoTunnelService : LifecycleService() {
                     launch { runReconciler() }
                     launch { runLocationPermissionsNotificationJob() }
                     launch { runPTunnelServiceAuto() }
+                    launch { runPTunnelUnderlyingLostWatcher() }
                 }
             }
         }
@@ -190,6 +194,39 @@ class AutoTunnelService : LifecycleService() {
      * service has nothing to reconnect; the first connect still
      * needs the app opened once.
      */
+    /**
+     * Phoenix-style underlying-lost watcher (2026-11-02), service
+     * side: same reasoning as the ViewModel watcher — the WGAT
+     * monitor snapshot can keep reporting cached Wifi after Wi-Fi
+     * is off, so the snapshot observer may never fire a stop while
+     * the app is closed. This watcher listens to non-VPN networks
+     * only and, 1s after a loss, re-reads LIVE caps; if no non-VPN
+     * network has INTERNET+VALIDATED and stop-on-no-internet is on,
+     * the -1 tunnel stops. Runs in this supervisorScope child, so it
+     * is unregistered when the active state flips off.
+     */
+    private suspend fun runPTunnelUnderlyingLostWatcher() {
+        PTunnelUnderlyingNetwork.watchUnderlyingLost(
+            this,
+            CoroutineScope(currentCoroutineContext()),
+        ) {
+            if (!PTunnelUnderlyingNetwork.hasUsableUnderlyingNetwork(this)) {
+                val stopOnNoInternet =
+                    autoTunnelRepository.flow.first().isStopOnNoInternetEnabled
+                val hasPTunnel =
+                    tunnelCoordinator.backendStatus.value.activeTunnels
+                        .containsKey(PTunnelConnect.PTUNNEL_TUNNEL_ID)
+                if (stopOnNoInternet && hasPTunnel) {
+                    tunnelCoordinator.stopTunnel(
+                        PTunnelConnect.PTUNNEL_TUNNEL_ID,
+                        TunnelActionSource.AUTO_TUNNEL,
+                    )
+                }
+            }
+        }
+        awaitCancellation()
+    }
+
     private suspend fun runPTunnelServiceAuto() {
         combine(
                 autoTunnelRepository.flow,

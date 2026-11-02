@@ -26,6 +26,7 @@ import com.zaneschepke.wireguardautotunnel.ptunnel.PTunnelFeedService
 import com.zaneschepke.wireguardautotunnel.ptunnel.describeFeedFailure
 import com.zaneschepke.wireguardautotunnel.ptunnel.PTunnelStore
 import com.zaneschepke.wireguardautotunnel.ptunnel.PTunnelUiState
+import com.zaneschepke.wireguardautotunnel.ptunnel.PTunnelUnderlyingNetwork
 import com.zaneschepke.wireguardautotunnel.ptunnel.PTunnelWalkGuard
 import com.zaneschepke.wireguardautotunnel.domain.repository.AppStateRepository
 import com.zaneschepke.wireguardautotunnel.domain.repository.AutoTunnelSettingsRepository
@@ -296,6 +297,36 @@ class SharedAppViewModel(
                 // exhausted both passes is never retried in a loop.
                 // Auto never requests VPN permission itself: if it is
                 // missing, the user must connect manually once.
+                // Phoenix-style underlying-lost watcher (2026-11-02):
+                // the WGAT monitor snapshot can keep reporting cached
+                // Wifi after Wi-Fi is off (VPN is the default network,
+                // so the cached branch never checks presence, and the
+                // snapshot may not even change), so the snapshot
+                // observer below may never fire a stop. This watcher
+                // listens to non-VPN networks only (Phoenix
+                // WireGuardManager) and, 1s after a loss, re-reads
+                // LIVE caps: if no non-VPN network has
+                // INTERNET+VALIDATED and stop-on-no-internet is on,
+                // the -1 tunnel stops no matter who started it.
+                PTunnelUnderlyingNetwork.watchUnderlyingLost(
+                    ptunnelContext(),
+                    viewModelScope,
+                ) {
+                    if (!PTunnelUnderlyingNetwork.hasUsableUnderlyingNetwork(
+                            ptunnelContext()
+                        )
+                    ) {
+                        val stopOnNoInternet =
+                            autoTunnelSettingsRepository.flow.first()
+                                .isStopOnNoInternetEnabled
+                        val hasPTunnel =
+                            tunnelCoordinator.backendStatus.value.activeTunnels
+                                .containsKey(PTunnelConnect.PTUNNEL_TUNNEL_ID)
+                        if (stopOnNoInternet && hasPTunnel) {
+                            stopPTunnel(manual = false)
+                        }
+                    }
+                }
                 combine(
                         autoTunnelSettingsRepository.flow,
                         stableNetworkEngine.stableState.mapNotNull { it?.state },
