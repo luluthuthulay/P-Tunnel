@@ -940,13 +940,32 @@ class SharedAppViewModel(
             // the manual cycle choice, else the pending permission
             // candidate, else the displayed endpoint (reopen:
             // last-connected), else JSON #1.
+            // Two-speed walk (user 2026-11-02: no long waits for
+            // Connected): pass 1 uses the QUICK timeout — field
+            // evidence says connecting endpoints land immediately
+            // while failing ones never land even in 5s, so a short
+            // pass-1 window steps over failures ~3s faster each.
+            // Pass 2 keeps the FULL timeout, so a slow-landing
+            // endpoint cut short in pass 1 still gets its full
+            // window before the walk gives up.
             val candidates = endpoints
             pendingPTunnelCandidates = candidates
             val startCandidate =
                 fromCandidate ?: _ptunnelUiState.value.displayedEndpoint
             val ordered = PTunnelConnect.orderedWalk(candidates, startCandidate?.id)
+            val pass1Count =
+                startCandidate?.id?.let { id ->
+                    candidates.indexOfFirst { it.id == id }
+                }?.takeIf { it >= 0 }?.let { candidates.size - it }
+                    ?: candidates.size
 
-            for (candidate in ordered) {
+            for ((attemptIndex, candidate) in ordered.withIndex()) {
+                val handshakeTimeoutMs =
+                    if (attemptIndex < pass1Count) {
+                        PTUNNEL_HANDSHAKE_TIMEOUT_QUICK_MS
+                    } else {
+                        PTUNNEL_HANDSHAKE_TIMEOUT_MS
+                    }
                 updatePTunnel { it.copy(connectingEndpoint = candidate) }
                 val config =
                     try {
@@ -983,7 +1002,7 @@ class SharedAppViewModel(
                 }
 
                 tunnelCoordinator.startTunnel(config)
-                if (awaitPTunnelHandshake(candidate)) {
+                if (awaitPTunnelHandshake(candidate, handshakeTimeoutMs)) {
                     pendingPTunnelCandidate = null
                     pendingPTunnelCandidates = null
                     ptunnelStore.saveConnectedEndpoint(candidate.id)
@@ -1005,7 +1024,7 @@ class SharedAppViewModel(
                     "connect",
                     candidate,
                     TimeoutException("handshake timeout"),
-                    handshakeElapsedMs = PTUNNEL_HANDSHAKE_TIMEOUT_MS,
+                    handshakeElapsedMs = handshakeTimeoutMs,
                 )
             }
 
@@ -1033,15 +1052,18 @@ class SharedAppViewModel(
     }
 
     /**
-     * Waits up to [PTUNNEL_HANDSHAKE_TIMEOUT_MS] for a handshake on the
+     * Waits up to [timeoutMs] for a handshake on the
      * P-Tunnel tunnel: backend Healthy, or a peer handshake timestamp at or
      * after this attempt started. Polling the backend status flow (not a
      * raw UDP probe) is used because a WireGuard initiation packet is only
      * sent while the tunnel is UP.
      */
-    private suspend fun awaitPTunnelHandshake(candidate: EndpointInfo): Boolean {
+    private suspend fun awaitPTunnelHandshake(
+        candidate: EndpointInfo,
+        timeoutMs: Long,
+    ): Boolean {
         val attemptStartSec = System.currentTimeMillis() / 1000
-        val deadline = System.currentTimeMillis() + PTUNNEL_HANDSHAKE_TIMEOUT_MS
+        val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
             val active =
                 tunnelCoordinator.backendStatus.value
@@ -1063,6 +1085,9 @@ class SharedAppViewModel(
     companion object {
         /** Per-candidate handshake wait (provisional: spec says "check", no window given). */
         const val PTUNNEL_HANDSHAKE_TIMEOUT_MS = 5_000L
+
+        /** Pass-1 handshake wait for the two-speed walk (user 2026-11-02). */
+        const val PTUNNEL_HANDSHAKE_TIMEOUT_QUICK_MS = 2_000L
 
         /** Feed poll interval while the P-Tunnel home screen is in the foreground (v2). */
         const val PTUNNEL_POLL_INTERVAL_MS = 60_000L
