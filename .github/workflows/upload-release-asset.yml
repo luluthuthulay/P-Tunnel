@@ -1,0 +1,40 @@
+name: upload-release-asset
+permissions:
+  contents: write
+  actions: read
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to upload to (must already exist)"
+        required: true
+      run_id:
+        description: "CI run id holding the artifact"
+        required: true
+      artifact:
+        description: "Artifact name"
+        required: true
+        default: android_artifacts_standalone
+      source_file:
+        description: "APK filename inside the artifact"
+        required: true
+      asset_name:
+        description: "Asset filename in the release"
+        required: true
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download CI artifact
+        uses: actions/download-artifact@v8
+        with:
+          run-id: ${{ inputs.run_id }}
+          name: ${{ inputs.artifact }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: artifact
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp "artifact/${{ inputs.source_file }}" "${{ inputs.asset_name }}"
+          gh release upload "${{ inputs.tag }}" "${{ inputs.asset_name }}" --clobber
