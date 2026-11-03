@@ -289,6 +289,11 @@ class AutoTunnelService : LifecycleService() {
                 }
                 if (!autoForType) return@collect
                 if (PTunnelWalkGuard.manualOverride) return@collect
+                // No-internet pre-check (2026-11-03): same stale-snapshot
+                // guard as the ViewModel observer — never start a walk
+                // without a LIVE usable underlying network; skip without
+                // setting exhausted so network return re-triggers.
+                if (!PTunnelUnderlyingNetwork.hasUsableUnderlyingNetwork(this)) return@collect
                 // Walk in a child job: tryBootAuto waits for usable
                 // network and walks candidates; the guard inside it
                 // drops overlapping triggers.

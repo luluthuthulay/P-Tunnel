@@ -409,6 +409,14 @@ class SharedAppViewModel(
                         if (!autoForType) return@collect
                         if (PTunnelWalkGuard.manualOverride) return@collect
                         if (key.endpointsEmpty) return@collect
+                        // No-internet pre-check (2026-11-03): the snapshot's
+                        // usable flag can stay stale-true with Wi-Fi/data
+                        // off, green-lighting walks into a dead network
+                        // (VPN icon flicker, restart loop). Read LIVE caps
+                        // instead: no usable underlying network -> skip
+                        // this trigger WITHOUT setting exhausted, so a
+                        // network return re-triggers the walk.
+                        if (!PTunnelUnderlyingNetwork.hasUsableUnderlyingNetwork(ptunnelContext())) return@collect
                         startPTunnel()
                         ptunnelAutoStarted = true
                     }
