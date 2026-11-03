@@ -13,7 +13,9 @@ object GitHubReleaseMapper {
         AppUpdate(
             version = newVersion,
             releaseUrl = gitHubRelease.htmlUrl,
-            apkUrl = apkAsset.browserDownloadUrl,
+            // Lovable proxy serves the release APK (Phoenix pattern): the
+            // download works without VPN, unlike a direct GitHub asset URL.
+            apkUrl = "https://ipmh.lovable.app/api/public/apk/ptunnel",
             apkFileName = apkAsset.name,
             apkSize = apkAsset.size.takeIf { it > 0 },
         )
