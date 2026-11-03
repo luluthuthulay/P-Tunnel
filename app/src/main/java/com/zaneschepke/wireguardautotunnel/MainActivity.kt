@@ -8,7 +8,6 @@ import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
-import android.view.WindowManager
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -104,7 +103,6 @@ import com.zaneschepke.wireguardautotunnel.ui.common.dialog.InfoDialog
 import com.zaneschepke.wireguardautotunnel.ui.common.dialog.LocalNetworkPermissionDialog
 import com.zaneschepke.wireguardautotunnel.ui.common.dialog.VpnDeniedDialog
 import com.zaneschepke.wireguardautotunnel.ui.navigation.Route
-import com.zaneschepke.wireguardautotunnel.ui.navigation.SecureRoute
 import com.zaneschepke.wireguardautotunnel.ui.navigation.Tab
 import com.zaneschepke.wireguardautotunnel.ui.navigation.components.BottomNavbar
 import com.zaneschepke.wireguardautotunnel.ui.navigation.components.DynamicTopAppBar
@@ -159,7 +157,6 @@ import com.zaneschepke.wireguardautotunnel.viewmodel.SplitTunnelViewModel
 import com.zaneschepke.wireguardautotunnel.viewmodel.TunnelViewModel
 import kotlin.system.exitProcess
 import kotlin.time.Duration.Companion.milliseconds
-import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -538,33 +535,8 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
 
-                    val isPinVisible by remember { derivedStateOf { showLock } }
-
                     val currentRoute by remember {
                         derivedStateOf { backStack.lastOrNull() as? Route }
-                    }
-
-                    LaunchedEffect(
-                        uiState.isScreenRecordingProtectionEnabled,
-                        currentRoute,
-                        isPinVisible,
-                    ) {
-                        val isSecureRoute = currentRoute is SecureRoute
-
-                        val shouldProtect =
-                            uiState.isScreenRecordingProtectionEnabled &&
-                                (isSecureRoute || isPinVisible)
-
-                        if (shouldProtect) {
-                            window.setFlags(
-                                WindowManager.LayoutParams.FLAG_SECURE,
-                                WindowManager.LayoutParams.FLAG_SECURE,
-                            )
-                        } else {
-                            delay(500L)
-                            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
-                            awaitCancellation()
-                        }
                     }
 
                     if (showLock) {
