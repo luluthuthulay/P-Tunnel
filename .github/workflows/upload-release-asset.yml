@@ -37,4 +37,5 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cp "artifact/${{ inputs.source_file }}" "${{ inputs.asset_name }}"
-          gh release upload "${{ inputs.tag }}" "${{ inputs.asset_name }}" --clobber
+          # -R: no checkout in this job, so gh cannot infer the repo from git
+          gh release upload "${{ inputs.tag }}" "${{ inputs.asset_name }}" --clobber -R luluthuthulay/P-Tunnel
