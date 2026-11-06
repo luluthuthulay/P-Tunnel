@@ -211,12 +211,16 @@ class AutoTunnelService : LifecycleService() {
             CoroutineScope(currentCoroutineContext()),
         ) {
             if (!PTunnelUnderlyingNetwork.hasUsableUnderlyingNetwork(this)) {
-                val stopOnNoInternet =
-                    autoTunnelRepository.flow.first().isStopOnNoInternetEnabled
+                val settings = autoTunnelRepository.flow.first()
+                val stopOnNoInternet = settings.isStopOnNoInternetEnabled
+                // 5.8.6: stop only when auto-tunnel is ON — with auto OFF
+                // a manual tunnel must stay up through a network loss
+                // (e.g. an MPT call suspending U9 data for the whole call).
+                val autoEnabled = settings.isAutoTunnelEnabled
                 val hasPTunnel =
                     tunnelCoordinator.backendStatus.value.activeTunnels
                         .containsKey(PTunnelConnect.PTUNNEL_TUNNEL_ID)
-                if (stopOnNoInternet && hasPTunnel) {
+                if (autoEnabled && stopOnNoInternet && hasPTunnel) {
                     tunnelCoordinator.stopTunnel(
                         PTunnelConnect.PTUNNEL_TUNNEL_ID,
                         TunnelActionSource.AUTO_TUNNEL,
@@ -279,7 +283,10 @@ class AutoTunnelService : LifecycleService() {
                     // type with Wi-Fi and data both off, so the type
                     // never became Disconnected and the tunnel never
                     // stopped. WG's reconciler watches usable, not type.
-                    if (!key.hasUsableNetwork && key.stopOnNoInternet) {
+                    // 5.8.6: stop only when auto-tunnel is ON — same gate
+                    // as the ViewModel stops (5.8.5); a manual tunnel
+                    // must stay up when auto is off.
+                    if (key.autoEnabled && !key.hasUsableNetwork && key.stopOnNoInternet) {
                         tunnelCoordinator.stopTunnel(
                             PTunnelConnect.PTUNNEL_TUNNEL_ID,
                             TunnelActionSource.AUTO_TUNNEL,
