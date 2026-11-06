@@ -186,6 +186,17 @@ class PTunnelRestoreHandler(
             val ordered = PTunnelConnect.orderedWalk(candidates, storedId)
             val context = ptunnelStore.appContext
             for (candidate in ordered) {
+                // Mid-walk network loss (e.g. a call suspends data):
+                // no endpoint can handshake without a network, so stop
+                // burning attempts — and do NOT exhaust: the next
+                // network-return trigger re-runs the walk. (The
+                // ViewModel walk is covered by its watcher cancelling
+                // the job; this boot walk has no such cancellation, so
+                // it needs the check inline.)
+                if (!PTunnelUnderlyingNetwork.hasUsableUnderlyingNetwork(context)) {
+                    Timber.d("P-Tunnel boot auto: network lost mid-walk, stopping without exhausting")
+                    return true
+                }
                 val config =
                     try {
                         PTunnelConnect.buildConfig(baseConf, candidate)

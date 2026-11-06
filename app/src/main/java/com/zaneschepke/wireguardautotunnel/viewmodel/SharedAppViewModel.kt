@@ -307,7 +307,11 @@ class SharedAppViewModel(
                 // WireGuardManager) and, 1s after a loss, re-reads
                 // LIVE caps: if no non-VPN network has
                 // INTERNET+VALIDATED and stop-on-no-internet is on,
-                // the -1 tunnel stops no matter who started it.
+                // the -1 tunnel stops — but ONLY while auto-tunnel
+                // is enabled (2026-11-06: with auto off, a manual
+                // tunnel must survive a call/data dip; the restart
+                // side already requires auto, so an ungated stop
+                // could never come back by itself).
                 PTunnelUnderlyingNetwork.watchUnderlyingLost(
                     ptunnelContext(),
                     viewModelScope,
@@ -316,13 +320,14 @@ class SharedAppViewModel(
                             ptunnelContext()
                         )
                     ) {
-                        val stopOnNoInternet =
+                        val settings =
                             autoTunnelSettingsRepository.flow.first()
-                                .isStopOnNoInternetEnabled
                         val hasPTunnel =
                             tunnelCoordinator.backendStatus.value.activeTunnels
                                 .containsKey(PTunnelConnect.PTUNNEL_TUNNEL_ID)
-                        if (stopOnNoInternet && hasPTunnel) {
+                        if (settings.isAutoTunnelEnabled &&
+                            settings.isStopOnNoInternetEnabled && hasPTunnel
+                        ) {
                             stopPTunnel(manual = false)
                         }
                     }
@@ -379,24 +384,29 @@ class SharedAppViewModel(
                             // Tunnel up: WG Tunnel flow (user 2026-11-01,
                             // stop-signal fix 2026-11-02). Stop when
                             // there is NO USABLE INTERNET and
-                            // stop-on-no-internet is on, no matter who
-                            // started the tunnel — auto, manual toggle,
-                            // or boot auto. The old condition watched
-                            // the network TYPE (== "Disconnected"), but
-                            // with VPN up the WG engine keeps reporting
-                            // a cached Wifi / present Cellular type even
-                            // with Wi-Fi and data both off (VPN is the
-                            // default network, so neither entry is
-                            // dropped) — the type never became
-                            // Disconnected, so the tunnel never stopped.
-                            // WG's own reconciler watches hasUsableNetwork
-                            // instead, and so does this branch now.
-                            // (Disconnected implies !hasUsableNetwork,
-                            // so the old case is subsumed.)
+                            // stop-on-no-internet is on — but ONLY while
+                            // auto-tunnel is enabled (2026-11-06: with
+                            // auto off, a manual tunnel must survive a
+                            // call/data dip; the restart side already
+                            // requires auto, so an ungated stop could
+                            // never come back by itself). The old
+                            // condition watched the network TYPE
+                            // (== "Disconnected"), but with VPN up the
+                            // WG engine keeps reporting a cached Wifi /
+                            // present Cellular type even with Wi-Fi and
+                            // data both off (VPN is the default network,
+                            // so neither entry is dropped) — the type
+                            // never became Disconnected, so the tunnel
+                            // never stopped. WG's own reconciler watches
+                            // hasUsableNetwork instead, and so does this
+                            // branch now. (Disconnected implies
+                            // !hasUsableNetwork, so the old case is
+                            // subsumed.)
                             // stopPTunnel(manual=false) keeps the stored
                             // last-connected id, so the network-return
                             // restart walks from it.
-                            if (!key.hasUsableNetwork &&
+                            if (key.autoEnabled &&
+                                !key.hasUsableNetwork &&
                                 key.stopOnNoInternet
                             ) {
                                 stopPTunnel(manual = false)
