@@ -1,5 +1,7 @@
 import com.android.build.api.dsl.ApplicationExtension
 import com.android.build.api.variant.FilterConfiguration
+import com.android.build.api.variant.HasHostTestsBuilder
+import com.android.build.api.variant.HostTestBuilder
 
 plugins {
     alias(libs.plugins.android.application)
@@ -176,6 +178,18 @@ configure<ApplicationExtension> {
 }
 
 androidComponents {
+    // AGP 9 only creates host unit tests for the default variant, so
+    // test<Flavor><BuildType>UnitTest does not exist for the other
+    // variants (CI run 45039610077: testStandaloneReleaseUnitTest not
+    // found). Restore it for every variant through the variant API,
+    // so the workflow's test step works for any flavor/build-type
+    // dispatch. The old VariantBuilder.unitTestEnabled was removed
+    // in AGP 9.0; this is its documented replacement.
+    beforeVariants { variant ->
+        (variant as HasHostTestsBuilder).hostTests
+            .get(HostTestBuilder.UNIT_TEST_TYPE).enable = true
+    }
+
     onVariants { variant ->
         val isNightly = project.isNightlyBuild()
 
