@@ -59,7 +59,12 @@ fun PTunnelHomeSection(
     val ptunnelState by viewModel.ptunnelUiState.collectAsStateWithLifecycle()
     val isRunning = activeTunnel != null
     val displayState =
-        remember(activeTunnel, ptunnelState.isConnecting, ptunnelState.lastError) {
+        remember(
+            activeTunnel,
+            ptunnelState.isConnecting,
+            ptunnelState.lastError,
+            ptunnelState.connectingPhase,
+        ) {
             when {
                 activeTunnel != null -> DisplayTunnelState.from(activeTunnel)
                 ptunnelState.isConnecting -> DisplayTunnelState.EstablishingConnection
@@ -90,7 +95,8 @@ fun PTunnelHomeSection(
             description = {
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(
-                        text = stringResource(displayState.labelRes()),
+                        text = ptunnelState.connectingPhase
+                            ?: stringResource(displayState.labelRes()),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

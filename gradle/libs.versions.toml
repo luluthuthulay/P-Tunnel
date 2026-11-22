@@ -3,8 +3,8 @@
 compileSdk = "37"
 minSdk = "26"
 targetSdk = "37"
-versionCode = "50808"
-versionName = "5.8.8"
+versionCode = "50809"
+versionName = "5.8.9"
 jdk = "21"
 accompanist = "0.37.3"
 activityCompose = "1.13.0"
@@ -72,6 +72,7 @@ lifecycleViewmodelNavigation3 = "2.11.0"
 sonner = "0.4.0"
 core = "1.9.10"
 aboutlibraries = "15.3.0"
+bouncycastle = "1.78.1"
 
 [bundles]
 # Core AndroidX foundations
@@ -212,6 +213,7 @@ timber = { module = "com.jakewharton.timber:timber", version.ref = "timber" }
 quickie-foss = { module = "com.github.T8RIN.QuickieExtended:quickie-foss", version.ref = "quickieFoss" }
 desugar_jdk_libs = { module = "com.android.tools:desugar_jdk_libs", version.ref = "desugar_jdk_libs" }
 reorderable = { module = "sh.calvin.reorderable:reorderable", version.ref = "reorderable" }
+bouncycastle-bcprov = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bouncycastle" }
 
 
 aboutlibraries-compose = { module = "com.mikepenz:aboutlibraries-compose-m3", version.ref = "aboutlibraries" }

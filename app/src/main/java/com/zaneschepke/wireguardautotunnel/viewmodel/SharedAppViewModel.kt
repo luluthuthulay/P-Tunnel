@@ -26,6 +26,8 @@ import com.zaneschepke.wireguardautotunnel.ptunnel.PTunnelConnect
 import com.zaneschepke.wireguardautotunnel.ptunnel.PTunnelConfService
 import com.zaneschepke.wireguardautotunnel.ptunnel.PTunnelDiagnostics
 import com.zaneschepke.wireguardautotunnel.ptunnel.PTunnelFeedService
+import com.zaneschepke.wireguardautotunnel.ptunnel.PTunnelProbeWalk
+import com.zaneschepke.wireguardautotunnel.ptunnel.PTunnelProber
 import com.zaneschepke.wireguardautotunnel.ptunnel.describeFeedFailure
 import com.zaneschepke.wireguardautotunnel.ptunnel.PTunnelStore
 import com.zaneschepke.wireguardautotunnel.ptunnel.PTunnelUiState
@@ -633,7 +635,17 @@ class SharedAppViewModel(
     // P-Tunnel (single endpoint card, transient tunnel, feed + conf first)
     // ------------------------------------------------------------------
 
-    private val _ptunnelUiState = MutableStateFlow(PTunnelUiState())
+    // v5.8.9: seeded with the bundled trio, so the card shows an
+    // endpoint on the first frame even on a fresh install (no cache,
+    // no feed yet). The cache-first read in ensurePTunnelReady()
+    // replaces it with the cached list within milliseconds on later
+    // opens, and the feed refresh replaces it on every open.
+    private val _ptunnelUiState = MutableStateFlow(
+        PTunnelUiState(
+            endpoints = PTunnelConnect.BUNDLED,
+            displayedEndpoint = PTunnelConnect.BUNDLED.first(),
+        ),
+    )
     val ptunnelUiState = _ptunnelUiState.asStateFlow()
 
     private var ptunnelJob: Job? = null
@@ -697,6 +709,18 @@ class SharedAppViewModel(
         ptunnelReadyJob =
             viewModelScope.launch {
                 val context = ptunnelContext()
+                // Cache-first (v5.8.9): show the cached list immediately —
+                // the card must not wait 1-2s for the network fetch. The
+                // fetch below refreshes behind it; a failed fetch keeps
+                // the cached (or bundled) list.
+                val cachedNow =
+                    ptunnelStore.getEndpointsJson()?.let { raw ->
+                        runCatching { PTunnelFeedService.parse(raw).endpoints }
+                            .getOrNull()
+                    }.orEmpty()
+                if (cachedNow.isNotEmpty()) {
+                    applyPTunnelEndpoints(cachedNow)
+                }
                 if (ptunnelStore.getBaseConf() == null) {
                     PTunnelConfService.fetch(context)
                         .onSuccess { conf -> ptunnelStore.saveBaseConf(conf) }
@@ -931,13 +955,14 @@ class SharedAppViewModel(
     }
 
     /**
-     * Switch-ON: failover over a SNAPSHOT of the full cached list, one at
-     * a time, in two passes (see [runPTunnelConnect]). A manual cycle, if
-     * present, is the first candidate and is consumed here (cleared) — it
-     * is one-time for this connect only. Otherwise the walk starts from
-     * the displayed endpoint (reopen: last-connected). Polling may update
-     * the StateFlow list afterwards, but the local snapshot in
-     * [runPTunnelConnect] never changes mid-failover.
+     * Switch-ON: probe-first failover over a SNAPSHOT of the effective
+     * list (cached feed, else bundled trio) — see [runPTunnelConnect].
+     * A manual cycle, if present, is the first candidate and is
+     * consumed here (cleared) — it is one-time for this connect only.
+     * Otherwise the walk starts from the displayed endpoint (reopen:
+     * last-connected). Polling may update the StateFlow list afterwards,
+     * but the local snapshot in [runPTunnelConnect] never changes
+     * mid-failover.
      */
     fun startPTunnel() {
         if (ptunnelJob?.isActive == true) return
@@ -1018,10 +1043,30 @@ class SharedAppViewModel(
         val context = ptunnelContext()
         updatePTunnel { it.copy(isConnecting = true, lastError = null) }
         try {
+            // Base conf (Phoenix tap half, v5.8.9 option 1): the open-time
+            // prefetch (ensurePTunnelReady, silent) failed or never ran,
+            // so fetch on tap — ONE attempt, no internal retry (retry =
+            // next open's prefetch + next tap). Internet first: a fetch
+            // with no network can only fail after the full timeout.
+            // VPN permission is NOT checked before the fetch: the
+            // existing per-attempt resume path needs a built config, and
+            // a config needs the base conf — permission is checked in
+            // the walk as before, before any tunnel start (a grant with
+            // a null config would resume nothing: MainActivity only
+            // calls startTunnel when the stored config is non-null).
             var baseConf = ptunnelStore.getBaseConf()
             if (baseConf == null) {
-                // Open-time prefetch failed or never ran: try once now.
-                // Still no VPN permission is requested for this fetch.
+                if (!PTunnelUnderlyingNetwork.hasUsableUnderlyingNetwork(context)) {
+                    updatePTunnel {
+                        it.copy(
+                            isConnecting = false,
+                            connectingEndpoint = null,
+                            lastError = "Config fetch failed — check connection",
+                        )
+                    }
+                    return
+                }
+                updatePTunnel { it.copy(connectingPhase = "Fetching config…") }
                 baseConf =
                     PTunnelConfService.fetch(context)
                         .onSuccess { conf -> ptunnelStore.saveBaseConf(conf) }
@@ -1029,22 +1074,28 @@ class SharedAppViewModel(
                             PTunnelDiagnostics.report(context, "conf", null, error)
                         }
                         .getOrNull()
+                updatePTunnel { it.copy(connectingPhase = null) }
             }
             if (baseConf == null) {
                 updatePTunnel {
                     it.copy(
                         isConnecting = false,
                         connectingEndpoint = null,
-                        lastError = "Could not load the connection config",
+                        connectingPhase = null,
+                        lastError = "Config fetch failed — check connection",
                     )
                 }
                 return
             }
+            val conf = baseConf
 
             // Failover candidates are a SNAPSHOT (v2): either the snapshot
             // saved when this connect first started (so a permission-resume
             // keeps the same order), or the full list in JSON order right now.
             // Polling updates the StateFlow list, never this local list.
+            // v5.8.9: the list is the EFFECTIVE list — cached feed when
+            // present, else the bundled trio — so ON works even when the
+            // feed fetch failed.
             var endpoints = pendingPTunnelCandidates ?: _ptunnelUiState.value.endpoints
             if (endpoints.isEmpty()) {
                 endpoints =
@@ -1061,124 +1112,141 @@ class SharedAppViewModel(
                         }.orEmpty()
             }
             if (endpoints.isEmpty()) {
-                pendingPTunnelCandidates = null
-                updatePTunnel {
-                    it.copy(
-                        isConnecting = false,
-                        connectingEndpoint = null,
-                        lastError = "No endpoint available",
-                    )
-                }
-                return
+                endpoints = PTunnelConnect.BUNDLED
             }
 
-            // Failover candidates are the FULL cached list in JSON order
-            // (never top 3). Two passes: pass 1 from the start candidate
-            // to the end, pass 2 the whole list once more. Success at any
-            // attempt stops the walk at once; the second pass ending with
-            // no success stops, never wraps again. The start candidate is
-            // the manual cycle choice, else the pending permission
-            // candidate, else the displayed endpoint (reopen:
-            // last-connected), else JSON #1.
-            // Two-speed walk (user 2026-11-02: no long waits for
-            // Connected): pass 1 uses the QUICK timeout — field
-            // evidence says connecting endpoints land immediately
-            // while failing ones never land even in 5s, so a short
-            // pass-1 window steps over failures ~3s faster each.
-            // Pass 2 keeps the FULL timeout, so a slow-landing
-            // endpoint cut short in pass 1 still gets its full
-            // window before the walk gives up.
+            // v5.8.9 probe-first (Phoenix R1/R2/R4): probe rounds pick the
+            // responders; one tunnel attempt per responder in arrival
+            // order (start candidate first when it answered); re-roll up
+            // to 3 empty rounds. The start candidate is the manual cycle
+            // choice, else the pending permission candidate, else the
+            // displayed endpoint (reopen: last-connected), else JSON #1.
+            // No prober (no peer key in the conf) falls back to the legacy
+            // sequential walk inside the same helper.
             val candidates = endpoints
             pendingPTunnelCandidates = candidates
             val startCandidate =
                 fromCandidate ?: _ptunnelUiState.value.displayedEndpoint
-            val ordered = PTunnelConnect.orderedWalk(candidates, startCandidate?.id)
+            val prober = PTunnelProber.fromBaseConf(conf)
             val pass1Count =
                 startCandidate?.id?.let { id ->
                     candidates.indexOfFirst { it.id == id }
                 }?.takeIf { it >= 0 }?.let { candidates.size - it }
                     ?: candidates.size
-
-            for ((attemptIndex, candidate) in ordered.withIndex()) {
-                val handshakeTimeoutMs =
-                    if (attemptIndex < pass1Count) {
-                        PTUNNEL_HANDSHAKE_TIMEOUT_QUICK_MS
+            val result = PTunnelProbeWalk.run(
+                candidates = candidates,
+                startId = startCandidate?.id,
+                prober = prober,
+                shouldContinue = { true },
+                attempt = { walkAttempt ->
+                    val candidate = walkAttempt.endpoint
+                    updatePTunnel { it.copy(connectingEndpoint = candidate) }
+                    val config =
+                        try {
+                            PTunnelConnect.buildConfig(
+                                conf,
+                                candidate,
+                                walkAttempt.localPort,
+                            )
+                        } catch (e: Exception) {
+                            PTunnelDiagnostics.report(context, "connect", candidate, e)
+                            null
+                        }
+                    if (config == null) {
+                        PTunnelProbeWalk.AttemptOutcome.FAILED
                     } else {
-                        PTUNNEL_HANDSHAKE_TIMEOUT_MS
+                        // VPN permission is only requested on connect, never on open.
+                        // (Orbit `state` is not visible here, so tunnelMode is read
+                        // from the settings repository instead of the Orbit state.)
+                        val tunnelMode = settingsRepository.getGeneralSettings().tunnelMode
+                        if (tunnelMode == TunnelMode.VPN && !serviceManager.hasVpnPermission()) {
+                            pendingPTunnelCandidate = candidate
+                            postGlobalSideEffect(
+                                GlobalSideEffect.RequestVpnPermission(TunnelMode.VPN, config)
+                            )
+                            PTunnelProbeWalk.AttemptOutcome.ABORT
+                        } else if (
+                            !serviceManager.hasNotificationPermission() &&
+                                !appStateRepository.isNotificationPermissionRequested()
+                        ) {
+                            appStateRepository.setNotificationPermissionRequested(true)
+                            pendingPTunnelCandidate = candidate
+                            postGlobalSideEffect(
+                                GlobalSideEffect.RequestNotificationPermission(
+                                    NotificationPendingAction.StartTunnel(config)
+                                )
+                            )
+                            PTunnelProbeWalk.AttemptOutcome.ABORT
+                        } else {
+                            // Two-speed handshake wait, preserved for the
+                            // legacy fallback (localPort == null): pass 1
+                            // QUICK, pass 2 FULL (user 2026-11-02). Probe
+                            // responders always get the FULL window — a
+                            // proven responder deserves the same chance a
+                            // pass-2 candidate had.
+                            val handshakeTimeoutMs =
+                                if (walkAttempt.localPort == null &&
+                                    walkAttempt.attemptIndex < pass1Count
+                                ) {
+                                    PTUNNEL_HANDSHAKE_TIMEOUT_QUICK_MS
+                                } else {
+                                    PTUNNEL_HANDSHAKE_TIMEOUT_MS
+                                }
+                            tunnelCoordinator.startTunnel(config)
+                            if (awaitPTunnelHandshake(candidate, handshakeTimeoutMs)) {
+                                pendingPTunnelCandidate = null
+                                pendingPTunnelCandidates = null
+                                ptunnelStore.saveConnectedEndpoint(candidate.id)
+                                updatePTunnel {
+                                    it.copy(
+                                        connectedEndpoint = candidate,
+                                        displayedEndpoint = candidate,
+                                        isConnecting = false,
+                                        connectingEndpoint = null,
+                                        lastError = null,
+                                    )
+                                }
+                                PTunnelProbeWalk.AttemptOutcome.CONNECTED
+                            } else {
+                                // Handshake failed: bring this attempt fully DOWN, then try next.
+                                tunnelCoordinator.stopTunnel(PTunnelConnect.PTUNNEL_TUNNEL_ID)
+                                PTunnelDiagnostics.report(
+                                    context,
+                                    "connect",
+                                    candidate,
+                                    TimeoutException("handshake timeout"),
+                                    handshakeElapsedMs = handshakeTimeoutMs,
+                                )
+                                PTunnelProbeWalk.AttemptOutcome.FAILED
+                            }
+                        }
                     }
-                updatePTunnel { it.copy(connectingEndpoint = candidate) }
-                val config =
-                    try {
-                        PTunnelConnect.buildConfig(baseConf, candidate)
-                    } catch (e: Exception) {
-                        PTunnelDiagnostics.report(context, "connect", candidate, e)
-                        continue
-                    }
-
-                // VPN permission is only requested on connect, never on open.
-                // (Orbit `state` is not visible here, so tunnelMode is read
-                // from the settings repository instead of the Orbit state.)
-                val tunnelMode = settingsRepository.getGeneralSettings().tunnelMode
-                if (tunnelMode == TunnelMode.VPN && !serviceManager.hasVpnPermission()) {
-                    pendingPTunnelCandidate = candidate
-                    updatePTunnel { it.copy(isConnecting = true) }
-                    postGlobalSideEffect(
-                        GlobalSideEffect.RequestVpnPermission(TunnelMode.VPN, config)
-                    )
-                    return
+                },
+            )
+            when (result) {
+                is PTunnelProbeWalk.Result.Connected -> {
+                    // The attempt lambda already saved the connected id
+                    // and updated the card; nothing more to do.
                 }
-                if (
-                    !serviceManager.hasNotificationPermission() &&
-                        !appStateRepository.isNotificationPermissionRequested()
-                ) {
-                    appStateRepository.setNotificationPermissionRequested(true)
-                    pendingPTunnelCandidate = candidate
-                    postGlobalSideEffect(
-                        GlobalSideEffect.RequestNotificationPermission(
-                            NotificationPendingAction.StartTunnel(config)
-                        )
-                    )
-                    return
-                }
-
-                tunnelCoordinator.startTunnel(config)
-                if (awaitPTunnelHandshake(candidate, handshakeTimeoutMs)) {
-                    pendingPTunnelCandidate = null
+                PTunnelProbeWalk.Result.Exhausted -> {
                     pendingPTunnelCandidates = null
-                    ptunnelStore.saveConnectedEndpoint(candidate.id)
+                    // Both passes exhausted: STOP, stay stopped until a manual
+                    // ON (the auto observer never restarts an exhausted walk).
+                    PTunnelWalkGuard.exhausted = true
+                    ptunnelAutoStarted = false
                     updatePTunnel {
                         it.copy(
-                            connectedEndpoint = candidate,
-                            displayedEndpoint = candidate,
                             isConnecting = false,
                             connectingEndpoint = null,
-                            lastError = null,
+                            lastError = "endpoint not working",
                         )
                     }
-                    return
                 }
-                // Handshake failed: bring this attempt fully DOWN, then try next.
-                tunnelCoordinator.stopTunnel(PTunnelConnect.PTUNNEL_TUNNEL_ID)
-                PTunnelDiagnostics.report(
-                    context,
-                    "connect",
-                    candidate,
-                    TimeoutException("handshake timeout"),
-                    handshakeElapsedMs = handshakeTimeoutMs,
-                )
-            }
-
-            pendingPTunnelCandidates = null
-            // Both passes exhausted: STOP, stay stopped until a manual
-            // ON (the auto observer never restarts an exhausted walk).
-            PTunnelWalkGuard.exhausted = true
-            ptunnelAutoStarted = false
-            updatePTunnel {
-                it.copy(
-                    isConnecting = false,
-                    connectingEndpoint = null,
-                    lastError = "endpoint not working",
-                )
+                PTunnelProbeWalk.Result.Aborted -> {
+                    // Permission pause (the pending candidate is stored,
+                    // the snapshot survives for the resume) or job
+                    // cancellation: stay clean, do NOT exhaust.
+                }
             }
         } finally {
             // Always clear the transient connecting state here. The pending
@@ -1186,7 +1254,9 @@ class SharedAppViewModel(
             // permission grant can still resume from it, while a permission
             // denial leaves the card clean instead of stuck on "connecting".
             // This does not clear connectedEndpoint/displayedEndpoint.
-            updatePTunnel { it.copy(isConnecting = false, connectingEndpoint = null) }
+            updatePTunnel {
+                it.copy(isConnecting = false, connectingEndpoint = null, connectingPhase = null)
+            }
             PTunnelWalkGuard.release()
         }
     }

@@ -258,6 +258,9 @@ dependencies {
     implementation(libs.bundles.kotlinx.serialization)
     implementation(libs.ipaddress)
 
+    // WireGuard handshake prober (P-Tunnel fast-connect, v5.8.9): Noise_IKpsk2 initiation crypto
+    implementation(libs.bouncycastle.bcprov)
+
     // Firebase (P-Tunnel: Analytics + Crashlytics, versions via the BoM)
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.analytics)

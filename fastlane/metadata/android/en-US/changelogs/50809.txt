@@ -1,0 +1,5 @@
+What's new:
+- Faster connect: P-Tunnel now probes all endpoints in parallel and connects to the first responder, like Phoenix VPN
+- The endpoint shows instantly on open from the saved list instead of waiting for the feed
+- Fresh installs show a bundled endpoint immediately
+- First connect on a fresh install fetches the connection config first, with a clear status if it fails

@@ -52,11 +52,11 @@ import timber.log.Timber
  *
  * Boot auto ([tryBootAuto]) is separate from [tryRestore]: it runs only
  * in the AutoTunnel branch (after the service starts, which holds the
- * process foreground), waits for usable internet, then walks the cached
- * list last-connected-first with the same two-pass failover as the
- * ViewModel walk. The instant single-attempt [tryRestore] stays the
- * path everywhere else, so the default/sticky branches keep their
- * no-network-dependency behavior.
+ * process foreground), waits for usable internet, then probe-walks the
+ * effective list (cached feed, else bundled trio) last-connected-first
+ * with the same probe-first helper as the ViewModel walk. The instant
+ * single-attempt [tryRestore] stays the path everywhere else, so the
+ * default/sticky branches keep their no-network-dependency behavior.
  */
 class PTunnelRestoreHandler(
     private val ptunnelStore: PTunnelStore,
@@ -106,16 +106,17 @@ class PTunnelRestoreHandler(
 
     /**
      * Boot auto (WG-style): on boot, once usable internet is available,
-     * auto-connect the LAST-CONNECTED endpoint, walking to the next one
-     * on failure exactly like the ViewModel walk (two passes over the
-     * cached list in order; success stops at once; exhaustion stops
-     * until a manual ON).
+     * auto-connect the LAST-CONNECTED endpoint, probe-walking to the
+     * next responder on failure exactly like the ViewModel walk
+     * (probe rounds pick responders; success stops at once; exhaustion
+     * stops until a manual ON).
      *
      * Gates (all must hold, else false = "not applicable"):
      * - a base conf is stored, and either a last-connected record
-     *   exists OR a cached feed exists (fresh install, never
-     *   connected: the cached feed is the implicit config, walk
-     *   starts at feed #1 — WG pre-configured-tunnel rule);
+     *   exists OR a cached feed exists OR the bundled trio (fresh
+     *   install, never connected: the cached feed is the implicit
+     *   config, walk starts at feed #1 — WG pre-configured-tunnel
+     *   rule; with no cache the trio is the list);
      * - VPN permission is granted (auto never requests permission);
      * - no other P-Tunnel walk holds [PTunnelWalkGuard].
      *
@@ -140,7 +141,10 @@ class PTunnelRestoreHandler(
         // (orderedWalk with a null start id). Base conf + cached feed
         // both arrive on the first app open (prefetch), so this only
         // runs after settings were opened at least once — never on a
-        // truly untouched install with no feed at all.
+        // truly untouched install with no feed at all. v5.8.9: with no
+        // cached feed the bundled trio is the effective list, so a
+        // first open whose conf arrived but whose feed failed can
+        // still auto-connect.
         val storedId = ptunnelStore.getConnectedEndpoint()
         val baseConf = ptunnelStore.getBaseConf() ?: return false
         if (!serviceManager.hasVpnPermission()) return false
@@ -173,55 +177,79 @@ class PTunnelRestoreHandler(
                     runCatching { PTunnelFeedService.parse(raw).endpoints }.getOrNull()
                 }.orEmpty()
             val storedEndpoint = storedId?.let { parseStoredEndpoint(it) }
-            val candidates =
+            val candidates = PTunnelConnect.effectiveList(
                 when {
                     storedEndpoint == null -> cached
                     cached.any { it.id == storedEndpoint.id } -> cached
                     else -> listOf(storedEndpoint) + cached
-                }
+                },
+            )
             if (candidates.isEmpty()) return false
-            // storedId null (never connected) → orderedWalk starts at
-            // feed #1 by definition; storedId present → last-connected
-            // first, as before.
-            val ordered = PTunnelConnect.orderedWalk(candidates, storedId)
+            // v5.8.9 probe-first (Phoenix R1/R2/R4), shared helper with
+            // the ViewModel walk: probe rounds pick the responders, one
+            // tunnel attempt per responder (last-connected first when it
+            // answered), re-roll up to 3 empty rounds. The mid-walk
+            // network-loss rule is the helper's shouldContinue: stop
+            // WITHOUT exhausting, so the next network-return trigger
+            // re-runs the walk.
+            val prober = PTunnelProber.fromBaseConf(baseConf)
             val context = ptunnelStore.appContext
-            for (candidate in ordered) {
-                // Mid-walk network loss (e.g. a call suspends data):
-                // no endpoint can handshake without a network, so stop
-                // burning attempts — and do NOT exhaust: the next
-                // network-return trigger re-runs the walk. (The
-                // ViewModel walk is covered by its watcher cancelling
-                // the job; this boot walk has no such cancellation, so
-                // it needs the check inline.)
-                if (!PTunnelUnderlyingNetwork.hasUsableUnderlyingNetwork(context)) {
-                    Timber.d("P-Tunnel boot auto: network lost mid-walk, stopping without exhausting")
-                    return true
-                }
-                val config =
-                    try {
-                        PTunnelConnect.buildConfig(baseConf, candidate)
-                    } catch (e: Exception) {
-                        PTunnelDiagnostics.report(context, "connect", candidate, e)
-                        continue
+            val result = PTunnelProbeWalk.run(
+                candidates = candidates,
+                startId = storedId,
+                prober = prober,
+                shouldContinue = {
+                    PTunnelUnderlyingNetwork.hasUsableUnderlyingNetwork(context)
+                },
+                attempt = { walkAttempt ->
+                    val candidate = walkAttempt.endpoint
+                    val config =
+                        try {
+                            PTunnelConnect.buildConfig(
+                                baseConf,
+                                candidate,
+                                walkAttempt.localPort,
+                            )
+                        } catch (e: Exception) {
+                            PTunnelDiagnostics.report(context, "connect", candidate, e)
+                            null
+                        }
+                    if (config == null) {
+                        PTunnelProbeWalk.AttemptOutcome.FAILED
+                    } else {
+                        tunnelCoordinator.startTunnel(config)
+                        if (awaitBootHandshake()) {
+                            ptunnelStore.saveConnectedEndpoint(candidate.id)
+                            Timber.d("P-Tunnel boot auto: connected ${candidate.id}")
+                            PTunnelProbeWalk.AttemptOutcome.CONNECTED
+                        } else {
+                            tunnelCoordinator.stopTunnel(PTunnelConnect.PTUNNEL_TUNNEL_ID)
+                            PTunnelDiagnostics.report(
+                                context,
+                                "connect",
+                                candidate,
+                                TimeoutException("handshake timeout"),
+                                handshakeElapsedMs = BOOT_HANDSHAKE_TIMEOUT_MS,
+                            )
+                            PTunnelProbeWalk.AttemptOutcome.FAILED
+                        }
                     }
-                tunnelCoordinator.startTunnel(config)
-                if (awaitBootHandshake()) {
-                    ptunnelStore.saveConnectedEndpoint(candidate.id)
-                    Timber.d("P-Tunnel boot auto: connected ${candidate.id}")
-                    return true
+                },
+            )
+            return when (result) {
+                is PTunnelProbeWalk.Result.Connected -> true
+                PTunnelProbeWalk.Result.Exhausted -> {
+                    PTunnelWalkGuard.exhausted = true
+                    Timber.d("P-Tunnel boot auto: no endpoint connected")
+                    true
                 }
-                tunnelCoordinator.stopTunnel(PTunnelConnect.PTUNNEL_TUNNEL_ID)
-                PTunnelDiagnostics.report(
-                    context,
-                    "connect",
-                    candidate,
-                    TimeoutException("handshake timeout"),
-                    handshakeElapsedMs = BOOT_HANDSHAKE_TIMEOUT_MS,
-                )
+                PTunnelProbeWalk.Result.Aborted -> {
+                    // Network lost mid-walk: stop without exhausting —
+                    // the next network-return trigger re-runs the walk.
+                    Timber.d("P-Tunnel boot auto: network lost mid-walk, stopping without exhausting")
+                    true
+                }
             }
-            PTunnelWalkGuard.exhausted = true
-            Timber.d("P-Tunnel boot auto: no endpoint connected")
-            return true
         } finally {
             PTunnelWalkGuard.release()
         }

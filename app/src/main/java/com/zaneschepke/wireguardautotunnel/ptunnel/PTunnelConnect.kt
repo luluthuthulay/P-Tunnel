@@ -27,6 +27,21 @@ object PTunnelConnect {
     const val PTUNNEL_TUNNEL_ID = -1
     const val PTUNNEL_TUNNEL_NAME = "P Tunnel"
 
+    /**
+     * Bundled fallback endpoints (UDP 500): the default when no cached
+     * list exists and the feed has not arrived yet (fresh install, fetch
+     * failed). Same trio Phoenix bundles (feed 2026-10-24 top-3).
+     */
+    val BUNDLED: List<EndpointInfo> = listOf(
+        EndpointInfo("162.159.192.28", 500, 149, 2),
+        EndpointInfo("162.159.192.26", 500, 147, 11),
+        EndpointInfo("162.159.192.18", 500, 140, 7),
+    )
+
+    /** Effective candidate list: the cached feed when present, else the bundled trio. */
+    fun effectiveList(cached: List<EndpointInfo>): List<EndpointInfo> =
+        cached.ifEmpty { BUNDLED }
+
     private val endpointLineRegex = Regex("(?m)^\\s*Endpoint\\s*=.*$")
 
     /**
@@ -48,12 +63,41 @@ object PTunnelConnect {
         return endpointLineRegex.replace(baseConf, "Endpoint = ${endpoint.id}")
     }
 
-    fun buildConfig(baseConf: String, endpoint: EndpointInfo): TunnelConfig {
+    fun buildConfig(baseConf: String, endpoint: EndpointInfo, listenPort: Int? = null): TunnelConfig {
+        val confText = swapEndpoint(baseConf, endpoint)
         return TunnelConfig(
             id = PTUNNEL_TUNNEL_ID,
             name = PTUNNEL_TUNNEL_NAME,
-            quickConfig = swapEndpoint(baseConf, endpoint),
+            quickConfig = listenPort?.let { setListenPort(confText, it) } ?: confText,
         )
+    }
+
+    /**
+     * v5.8.9 R2: set (or replace) the ListenPort line in the [Interface]
+     * section to [port] — the winning probe flow's local port, so the
+     * tunnel binds the flow the probe just proved live. Pure config-text
+     * rewrite (same pattern as swapEndpoint): the wgtunnel parser reads
+     * ListenPort into Interface.listenPort, the backend serializes it as
+     * UAPI listen_port=N, and wireguard-go rebinds on exactly that port.
+     * A port outside 1..65535, or a conf with no [Interface] section,
+     * returns the conf unchanged — the attempt then proceeds as before
+     * (ephemeral port), so a bad port can never break a connect. A port
+     * taken between probe-close and tunnel-bind fails the attempt
+     * cleanly (bind error → next responder), same as any other attempt
+     * failure.
+     */
+    fun setListenPort(confText: String, port: Int): String {
+        if (port !in 1..65535) return confText
+        val existing = Regex("(?im)^\\s*ListenPort\\s*=.*")
+        if (existing.containsMatchIn(confText)) {
+            // Plain-String overload (same pattern as swapEndpoint): the
+            // replacement holds only the port digits, so no $ or \ can
+            // be misread as a group reference.
+            return existing.replaceFirst(confText, "ListenPort = $port")
+        }
+        val interfaceHeader = Regex("(?im)^\\[Interface\\]\\s*$")
+        if (!interfaceHeader.containsMatchIn(confText)) return confText
+        return interfaceHeader.replaceFirst(confText, "[Interface]\nListenPort = $port")
     }
 
     /**

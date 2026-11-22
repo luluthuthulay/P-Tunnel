@@ -66,6 +66,12 @@ data class PTunnelUiState(
     val isFeedRefreshing: Boolean = false,
     val isConnecting: Boolean = false,
     val connectingEndpoint: EndpointInfo? = null,
+    /**
+     * Transient connect-phase text shown in place of the "Establishing
+     * connection" label while set (v5.8.9: "Fetching config…" while the
+     * base conf is fetched on tap). Null in every other state.
+     */
+    val connectingPhase: String? = null,
     /** User-safe, generic error text for the card. Detail goes to Crashlytics, not here. */
     val lastError: String? = null,
     /**
