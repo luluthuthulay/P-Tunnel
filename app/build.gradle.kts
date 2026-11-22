@@ -187,7 +187,7 @@ androidComponents {
     // in AGP 9.0; this is its documented replacement.
     beforeVariants { variant ->
         (variant as HasHostTestsBuilder).hostTests
-            .get(HostTestBuilder.UNIT_TEST_TYPE).enable = true
+            .get(HostTestBuilder.UNIT_TEST_TYPE)?.enable = true
     }
 
     onVariants { variant ->
