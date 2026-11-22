@@ -1,0 +1,2 @@
+What's new:
+- Fixed: 5.8.7 closed immediately on open (a leftover Shizuku provider entry) — the app opens normally again
