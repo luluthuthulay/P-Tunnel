@@ -1,6 +1,5 @@
 package com.zaneschepke.wireguardautotunnel.viewmodel
 
-import androidx.core.content.PermissionChecker.PERMISSION_GRANTED
 import androidx.lifecycle.ViewModel
 import com.dokar.sonner.ToastType
 import com.wgtunnel.backend.shell.ShellExecutor
@@ -28,7 +27,6 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.mapNotNull
 import org.orbitmvi.orbit.OrbitContainerHost
 import org.orbitmvi.orbit.viewmodel.orbitContainer
-import rikka.shizuku.Shizuku
 
 class AutoTunnelViewModel(
     private val autoTunnelRepository: AutoTunnelSettingsRepository,
@@ -311,40 +309,8 @@ class AutoTunnelViewModel(
                     )
                 )
             }
-            WifiDetectionMethod.SHIZUKU -> {
-                requestShizuku()
-                return@intent
-            }
             else -> Unit
         }
         autoTunnelRepository.upsert(state.autoTunnelSettings.copy(wifiDetectionMethod = method))
-    }
-
-    private fun requestShizuku() = intent {
-        Shizuku.addRequestPermissionResultListener(
-            Shizuku.OnRequestPermissionResultListener { _: Int, grantResult: Int ->
-                if (grantResult != PERMISSION_GRANTED) return@OnRequestPermissionResultListener
-                intent {
-                    autoTunnelRepository.upsert(
-                        state.autoTunnelSettings.copy(
-                            wifiDetectionMethod = WifiDetectionMethod.SHIZUKU
-                        )
-                    )
-                }
-            }
-        )
-        try {
-            if (Shizuku.checkSelfPermission() != PERMISSION_GRANTED) Shizuku.requestPermission(123)
-            autoTunnelRepository.upsert(
-                state.autoTunnelSettings.copy(wifiDetectionMethod = WifiDetectionMethod.SHIZUKU)
-            )
-        } catch (_: Exception) {
-            postSideEffect(
-                GlobalSideEffect.Snackbar(
-                    StringValue.StringResource(R.string.shizuku_not_detected),
-                    ToastType.Error,
-                )
-            )
-        }
     }
 }

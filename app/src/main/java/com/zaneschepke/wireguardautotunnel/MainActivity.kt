@@ -220,6 +220,9 @@ class MainActivity : AppCompatActivity() {
         }
         super.onCreate(savedInstanceState)
 
+        // Phoenix-like update check: on every app open (once per process).
+        viewModel.checkForUpdate()
+
         handleConfigFileIntent(intent)
         handleWgDeepLinkIntent(intent)
 

@@ -1,16 +1,37 @@
 package com.zaneschepke.wireguardautotunnel.data.network
 
+import android.content.Context
 import com.zaneschepke.wireguardautotunnel.data.entity.Asset
 import com.zaneschepke.wireguardautotunnel.data.entity.GitHubRelease
+import com.zaneschepke.wireguardautotunnel.ptunnel.PTunnelBoundHttp
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.plugins.ClientRequestException
 import io.ktor.client.request.get
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import timber.log.Timber
 
-class KtorGitHubApi(private val client: HttpClient) : GitHubApi {
+class KtorGitHubApi(private val client: HttpClient, private val context: Context) : GitHubApi {
     override suspend fun getLatestRelease(owner: String, repo: String): Result<GitHubRelease> {
+        // Bound to the underlying physical network first (Phoenix
+        // pattern): a dead tunnel must not strangle the update check.
+        // Any bound failure retries once on the plain client.
+        val bound = PTunnelBoundHttp.boundClient(client, context)
+        return try {
+            fetchLatest(bound, owner, repo)
+        } catch (e: Exception) {
+            if (bound === client) return Result.failure(e)
+            Timber.w(e, "Bound update check failed, retrying unbound")
+            runCatching { fetchLatest(client, owner, repo) }
+        }
+    }
+
+    private suspend fun fetchLatest(
+        httpClient: HttpClient,
+        owner: String,
+        repo: String,
+    ): Result<GitHubRelease> {
         return try {
             // Phoenix pattern: github.com/<owner>/<repo>/releases/latest
             // 302-redirects to the latest release page. Read the tag from the
@@ -18,7 +39,7 @@ class KtorGitHubApi(private val client: HttpClient) : GitHubApi {
             // check works without VPN on networks where the API host is
             // blocked but github.com is reachable.
             val response =
-                client.config { followRedirects = false }
+                httpClient.config { followRedirects = false }
                     .get("https://github.com/$owner/$repo/releases/latest")
             val location =
                 response.headers[HttpHeaders.Location]

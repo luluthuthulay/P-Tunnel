@@ -3,6 +3,7 @@ package com.zaneschepke.wireguardautotunnel.ui.screens.tunnels
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.NetworkCheck
@@ -40,6 +41,7 @@ import com.zaneschepke.wireguardautotunnel.ui.screens.tunnels.components.GroupSe
 import com.zaneschepke.wireguardautotunnel.ui.screens.tunnels.components.SelectionActionsSheet
 import com.zaneschepke.wireguardautotunnel.ui.screens.tunnels.components.TunnelImportSheet
 import com.zaneschepke.wireguardautotunnel.ui.screens.tunnels.components.TunnelList
+import com.zaneschepke.wireguardautotunnel.ui.screens.tunnels.components.UpdateBanner
 import com.zaneschepke.wireguardautotunnel.ui.screens.tunnels.components.UrlImportDialog
 import com.zaneschepke.wireguardautotunnel.ui.sideeffect.LocalSideEffect
 import com.zaneschepke.wireguardautotunnel.util.FileUtils
@@ -373,5 +375,8 @@ fun TunnelsScreen(sharedViewModel: SharedAppViewModel = koinActivityViewModel())
         )
     }
 
-    TunnelList(uiState, Modifier.fillMaxSize(), sharedViewModel)
+    Column(modifier = Modifier.fillMaxSize()) {
+        UpdateBanner(sharedViewModel)
+        TunnelList(uiState, Modifier.weight(1f), sharedViewModel)
+    }
 }

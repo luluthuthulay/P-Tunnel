@@ -52,7 +52,13 @@ configure<ApplicationExtension> {
     }
 
     // fix okhttp proguard issue
-    packaging { resources { pickFirsts.add("okhttp3/internal/publicsuffix/publicsuffixes.gz") } }
+    // P-Tunnel size: universal APK ships ARM only (armeabi-v7a + arm64-v8a).
+    // Dependency AARs bundle x86/x86_64 .so files that the splits config
+    // cannot keep out of the universal APK, so exclude them here.
+    packaging {
+        jniLibs { excludes += listOf("lib/x86/**", "lib/x86_64/**") }
+        resources { pickFirsts.add("okhttp3/internal/publicsuffix/publicsuffixes.gz") }
+    }
 
     splits {
         abi {
@@ -259,9 +265,6 @@ dependencies {
 
     // State management
     implementation(libs.bundles.orbit.mvi)
-
-    // Shizuku
-    implementation(libs.bundles.shizuku)
 
     // UI utilities
     implementation(libs.bundles.ui.utilities)

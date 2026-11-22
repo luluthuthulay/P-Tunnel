@@ -32,9 +32,5 @@ dependencies {
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
 
-    // shizuku
-    implementation(libs.shizuku.api)
-    implementation(libs.shizuku.provider)
-
     implementation(libs.timber)
 }

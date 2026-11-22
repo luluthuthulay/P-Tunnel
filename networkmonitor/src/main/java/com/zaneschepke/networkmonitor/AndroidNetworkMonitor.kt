@@ -19,9 +19,7 @@ import android.system.OsConstants
 import com.zaneschepke.networkmonitor.AndroidNetworkMonitor.WifiDetectionMethod.DEFAULT
 import com.zaneschepke.networkmonitor.AndroidNetworkMonitor.WifiDetectionMethod.LEGACY
 import com.zaneschepke.networkmonitor.AndroidNetworkMonitor.WifiDetectionMethod.ROOT
-import com.zaneschepke.networkmonitor.AndroidNetworkMonitor.WifiDetectionMethod.SHIZUKU
 import com.zaneschepke.networkmonitor.model.LinkPropertiesSnapshot
-import com.zaneschepke.networkmonitor.shizuku.ShizukuShell
 import com.zaneschepke.networkmonitor.util.EXTRA_ACTIVE_LOCAL_ONLY_IFACES
 import com.zaneschepke.networkmonitor.util.EXTRA_ACTIVE_TETHER_IFACES
 import com.zaneschepke.networkmonitor.util.TETHER_STATE_CHANGED_ACTION
@@ -87,8 +85,7 @@ class AndroidNetworkMonitor(
     enum class WifiDetectionMethod(val value: Int) {
         DEFAULT(0),
         LEGACY(1),
-        ROOT(2),
-        SHIZUKU(3);
+        ROOT(2);
 
         companion object {
             fun fromValue(value: Int): WifiDetectionMethod =
@@ -706,18 +703,12 @@ class AndroidNetworkMonitor(
                                 ?: (ANDROID_UNKNOWN_SSID to ANDROID_UNKNOWN_BSSID)
                         WifiDetails(ssid, bssid)
                     }
-                    ROOT,
-                    SHIZUKU -> {
+                    ROOT -> {
                         val raw =
                             withTimeoutOrNull(SHELL_COMMAND_TIMEOUT_MS.milliseconds) {
-                                if (method == ROOT) {
-                                    configurationListener.runRootShellCommand(
-                                        WIFI_INFO_SHELL_COMMAND
-                                    )
-                                } else {
-                                    ShizukuShell(applicationScope)
-                                        .singleResponseCommand(WIFI_INFO_SHELL_COMMAND)
-                                }
+                                configurationListener.runRootShellCommand(
+                                    WIFI_INFO_SHELL_COMMAND
+                                )
                             } ?: ""
                         parseWifiStatusOutput(raw)
                     }

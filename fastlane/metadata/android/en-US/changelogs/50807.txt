@@ -1,0 +1,4 @@
+What's new:
+- Smaller download: universal APK now ships ARM only (~31 MB)
+- Update check like Phoenix VPN: banner on the home screen when a new version is out, download and install in the app
+- Removed Tasker remote control and Shizuku Wi-Fi detection

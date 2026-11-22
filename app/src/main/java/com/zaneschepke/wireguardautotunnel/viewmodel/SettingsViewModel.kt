@@ -13,7 +13,6 @@ import com.zaneschepke.wireguardautotunnel.domain.repository.TunnelRepository
 import com.zaneschepke.wireguardautotunnel.domain.sideeffect.GlobalSideEffect
 import com.zaneschepke.wireguardautotunnel.ui.state.SettingUiState
 import com.zaneschepke.wireguardautotunnel.util.StringValue
-import java.util.UUID
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -54,8 +53,6 @@ class SettingsViewModel(
                         val (tunnelActive, recoveryEventCount, lastRecoveryEventMs) = recovery
                         state.copy(
                             settings = settings,
-                            remoteKey = settings.remoteKey,
-                            isRemoteEnabled = settings.isRemoteControlEnabled,
                             isPinLockEnabled = settings.isPinLockEnabled,
                             isLoading = false,
                             tunnelActive = tunnelActive,
@@ -113,22 +110,6 @@ class SettingsViewModel(
 
     fun setLocalLogging(to: Boolean) = intent {
         monitoringRepository.upsert(state.monitoring.copy(isLocalLogsEnabled = to))
-    }
-
-    fun setRemoteEnabled(to: Boolean) = intent {
-        val key =
-            state.settings.remoteKey?.takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString()
-        settingsRepository.upsert(state.settings.copy(isRemoteControlEnabled = to, remoteKey = key))
-    }
-
-    fun rotateRemoteKey() = intent {
-        settingsRepository.upsert(state.settings.copy(remoteKey = UUID.randomUUID().toString()))
-        postSideEffect(
-            GlobalSideEffect.Snackbar(
-                StringValue.StringResource(R.string.remote_key_rotated),
-                ToastType.Success,
-            )
-        )
     }
 
     fun setTunnelScriptedEnabled(to: Boolean) = intent {

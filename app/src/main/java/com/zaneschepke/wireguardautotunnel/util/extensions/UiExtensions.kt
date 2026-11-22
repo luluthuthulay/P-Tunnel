@@ -51,7 +51,6 @@ fun WifiDetectionMethod.asTitleString(context: Context): String {
         WifiDetectionMethod.DEFAULT -> context.getString(R.string._default)
         WifiDetectionMethod.LEGACY -> context.getString(R.string.legacy)
         WifiDetectionMethod.ROOT -> context.getString(R.string.root)
-        WifiDetectionMethod.SHIZUKU -> context.getString(R.string.shizuku)
     }
 }
 
@@ -60,7 +59,6 @@ fun WifiDetectionMethod.to(): AndroidNetworkMonitor.WifiDetectionMethod {
         WifiDetectionMethod.DEFAULT -> AndroidNetworkMonitor.WifiDetectionMethod.DEFAULT
         WifiDetectionMethod.LEGACY -> AndroidNetworkMonitor.WifiDetectionMethod.LEGACY
         WifiDetectionMethod.ROOT -> AndroidNetworkMonitor.WifiDetectionMethod.ROOT
-        WifiDetectionMethod.SHIZUKU -> AndroidNetworkMonitor.WifiDetectionMethod.SHIZUKU
     }
 }
 
@@ -68,7 +66,6 @@ fun WifiDetectionMethod.asDescriptionString(context: Context): String? {
     return when (this) {
         WifiDetectionMethod.LEGACY -> context.getString(R.string.legacy_api_description)
         WifiDetectionMethod.ROOT -> context.getString(R.string.use_root_shell_for_wifi)
-        WifiDetectionMethod.SHIZUKU -> context.getString(R.string.use_shell_via_shizuku)
         WifiDetectionMethod.DEFAULT -> context.getString(R.string.use_android_recommended)
     }
 }

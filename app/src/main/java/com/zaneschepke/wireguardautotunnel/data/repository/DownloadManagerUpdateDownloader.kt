@@ -107,6 +107,7 @@ class DownloadManagerUpdateDownloader(
                 .putString(KEY_VERSION, update.version)
                 .putString(KEY_RELEASE_URL, update.releaseUrl)
                 .putString(KEY_URL, url)
+                .putString(KEY_GITHUB_URL, update.githubApkUrl)
         }
         _state.value = UpdateDownloadState.Downloading(0L, update.apkSize ?: NONE)
         startPolling(id)
@@ -135,10 +136,33 @@ class DownloadManagerUpdateDownloader(
                     }
                     return@launch
                 }
+                if (!apkVersionMatches(destination, update.version)) {
+                    Timber.w("In-app download version mismatch, discarding")
+                    destination.delete()
+                    if (publishFallback(self, UpdateDownloadState.Failed) && !isUiListening()) {
+                        notificationService.showUpdateDownloadFailed()
+                    }
+                    return@launch
+                }
                 if (publishFallback(self, UpdateDownloadState.Completed(destination))) {
                     deliver(destination)
                 }
             }
+    }
+
+    // Phoenix guarantee: never install a wrong-version APK. The Lovable
+    // route can serve a stale file in the publish window; a versioned
+    // GitHub URL cannot, so a mismatch falls back to GitHub instead of
+    // installing.
+    @Suppress("DEPRECATION")
+    private fun apkVersionMatches(file: File, expectedVersion: String): Boolean {
+        val info =
+            runCatching {
+                    context.packageManager.getPackageArchiveInfo(file.absolutePath, 0)
+                }
+                .getOrNull()
+                ?: return false
+        return info?.versionName == expectedVersion
     }
 
     // False when the download was canceled or replaced, so a late result can't overwrite the state
@@ -162,6 +186,7 @@ class DownloadManagerUpdateDownloader(
             apkUrl = prefs.getString(KEY_URL, null),
             apkFileName = fileName,
             apkSize = prefs.getLong(KEY_SIZE, NONE).takeIf { it > 0 },
+            githubApkUrl = prefs.getString(KEY_GITHUB_URL, null),
         )
     }
 
@@ -191,13 +216,45 @@ class DownloadManagerUpdateDownloader(
                     when (val result = query(downloadId)) {
                         is UpdateDownloadState.Completed -> {
                             pollJob?.cancel()
-                            _state.value = result
-                            // A repeated broadcast must not install or notify twice
-                            if (prefs.getLong(KEY_DELIVERED, NONE) == downloadId) {
+                            val expectedVersion = prefs.getString(KEY_VERSION, null)
+                            if (expectedVersion != null &&
+                                !apkVersionMatches(result.file, expectedVersion)
+                            ) {
+                                // Lovable served a stale/wrong APK: delete it
+                                // and fall back to the versioned GitHub URL.
+                                Timber.w(
+                                    "Downloaded APK version does not match $expectedVersion, falling back to GitHub"
+                                )
+                                val stored = storedUpdate()
+                                val githubUrl = stored?.githubApkUrl
+                                result.file.delete()
+                                discardFailed(downloadId)
+                                _state.value = UpdateDownloadState.Failed
+                                if (stored != null && !githubUrl.isNullOrBlank() &&
+                                    !stored.apkFileName.isNullOrBlank()
+                                ) {
+                                    runCatching {
+                                        startFallback(
+                                            stored.copy(apkUrl = githubUrl),
+                                            githubUrl,
+                                            stored.apkFileName,
+                                        )
+                                    }.onFailure {
+                                        Timber.e(it, "Failed to start GitHub fallback download")
+                                    }
+                                } else {
+                                    failed = true
+                                }
                                 null
                             } else {
-                                prefs.edit { putLong(KEY_DELIVERED, downloadId) }
-                                result
+                                _state.value = result
+                                // A repeated broadcast must not install or notify twice
+                                if (prefs.getLong(KEY_DELIVERED, NONE) == downloadId) {
+                                    null
+                                } else {
+                                    prefs.edit { putLong(KEY_DELIVERED, downloadId) }
+                                    result
+                                }
                             }
                         }
                         is UpdateDownloadState.Failed -> {
@@ -249,6 +306,14 @@ class DownloadManagerUpdateDownloader(
                     runCatching { downloadManager?.remove(id) }
                     prefs.edit { clear() }
                     apkFiles().forEach { it.delete() }
+                } else if (!apkVersionMatches(current.file, prefs.getString(KEY_VERSION, null) ?: "")) {
+                    // Finished by an older build before version verification:
+                    // a stale file must never be offered for install.
+                    Timber.w("Resumed APK version mismatch, discarding")
+                    runCatching { downloadManager?.remove(id) }
+                    prefs.edit { clear() }
+                    current.file.delete()
+                    _state.value = UpdateDownloadState.Idle
                 } else {
                     _state.value = current
                 }
@@ -412,6 +477,7 @@ class DownloadManagerUpdateDownloader(
         const val KEY_VERSION = "version"
         const val KEY_RELEASE_URL = "release_url"
         const val KEY_URL = "url"
+        const val KEY_GITHUB_URL = "github_url"
         const val KEY_DELIVERED = "delivered_id"
         const val NONE = -1L
         const val FAST_POLL_MS = 500L

@@ -11,13 +11,16 @@ import com.wgtunnel.parser.Config
 import com.wgtunnel.parser.ConfigParseException
 import com.zaneschepke.networkmonitor.ActiveNetwork
 import com.zaneschepke.networkmonitor.StableNetworkEngine
+import com.zaneschepke.wireguardautotunnel.BuildConfig
 import com.zaneschepke.wireguardautotunnel.R
 import com.zaneschepke.wireguardautotunnel.core.orchestration.AutoTunnelCoordinator
 import com.zaneschepke.wireguardautotunnel.core.orchestration.TunnelBackendCoordinator
 import com.zaneschepke.wireguardautotunnel.core.orchestration.TunnelCoordinator
 import com.zaneschepke.wireguardautotunnel.domain.enums.TunnelMode
+import com.zaneschepke.wireguardautotunnel.domain.model.AppUpdate
 import com.zaneschepke.wireguardautotunnel.domain.model.TunnelConfig
 import com.zaneschepke.wireguardautotunnel.domain.model.TunnelGroup
+import com.zaneschepke.wireguardautotunnel.domain.model.UpdateDownloadState
 import com.zaneschepke.wireguardautotunnel.ptunnel.EndpointInfo
 import com.zaneschepke.wireguardautotunnel.ptunnel.PTunnelConnect
 import com.zaneschepke.wireguardautotunnel.ptunnel.PTunnelConfService
@@ -36,6 +39,8 @@ import com.zaneschepke.wireguardautotunnel.domain.repository.SelectedTunnelsRepo
 import com.zaneschepke.wireguardautotunnel.domain.repository.TunnelGroupRepository
 import com.zaneschepke.wireguardautotunnel.domain.repository.TunnelRepository
 import com.zaneschepke.wireguardautotunnel.domain.repository.TunnelsSelection
+import com.zaneschepke.wireguardautotunnel.domain.repository.UpdateDownloader
+import com.zaneschepke.wireguardautotunnel.domain.repository.UpdateRepository
 import com.zaneschepke.wireguardautotunnel.domain.sideeffect.GlobalSideEffect
 import com.zaneschepke.wireguardautotunnel.domain.sideeffect.NotificationPendingAction
 import com.zaneschepke.wireguardautotunnel.service.ServiceManager
@@ -53,6 +58,7 @@ import com.zaneschepke.wireguardautotunnel.ui.state.sortRootByName
 import com.zaneschepke.wireguardautotunnel.ui.state.ungroupKeepingOrder
 import com.zaneschepke.wireguardautotunnel.ui.state.uniqueDisplayName
 import com.zaneschepke.wireguardautotunnel.ui.theme.Theme
+import com.zaneschepke.wireguardautotunnel.util.Constants
 import com.zaneschepke.wireguardautotunnel.util.FileUtils
 import com.zaneschepke.wireguardautotunnel.util.LocaleUtil
 import com.zaneschepke.wireguardautotunnel.util.StringValue
@@ -115,6 +121,8 @@ class SharedAppViewModel(
     private val fileUtils: FileUtils,
     private val networkUtils: NetworkUtils,
     private val ptunnelStore: PTunnelStore,
+    private val updateRepository: UpdateRepository,
+    private val updateDownloader: UpdateDownloader,
 ) : OrbitContainerHost<GlobalAppUiState, GlobalAppUiState, LocalSideEffect>, ViewModel() {
 
     val globalSideEffect = globalEffectRepository.flow
@@ -136,6 +144,120 @@ class SharedAppViewModel(
 
     fun consumeShowUpdateStatus() {
         _showUpdateStatusRequested.value = false
+    }
+
+    // Phoenix-like in-app update (v5.8.7): check on every app open, home
+    // banner until installed. The daily worker is gone; the Support
+    // screen keeps its own manual check on the same repository.
+    enum class UpdatePhase { IDLE, AVAILABLE, DOWNLOADING, READY, ERROR }
+
+    data class UpdateUiState(
+        val phase: UpdatePhase = UpdatePhase.IDLE,
+        val version: String? = null,
+        val progress: Int = 0,
+        val message: String? = null,
+    )
+
+    private val _updateUiState = MutableStateFlow(UpdateUiState())
+    val updateUiState = _updateUiState.asStateFlow()
+    private var updateCheckStarted = false
+    private var pendingUpdate: AppUpdate? = null
+
+    // Once per process (MainActivity onCreate runs again on rotation).
+    // Standalone flavor only — fdroid/google have their own distribution.
+    // Never throws: a failed check just leaves no banner.
+    fun checkForUpdate() {
+        if (updateCheckStarted) return
+        updateCheckStarted = true
+        if (BuildConfig.FLAVOR != Constants.STANDALONE_FLAVOR || BuildConfig.DEBUG) return
+        viewModelScope.launch {
+            updateDownloader.state.collect { download ->
+                when (download) {
+                    is UpdateDownloadState.Downloading -> {
+                        val progress = download.progress?.let { (it * 100).toInt() } ?: 0
+                        _updateUiState.value =
+                            _updateUiState.value.copy(
+                                phase = UpdatePhase.DOWNLOADING,
+                                progress = progress,
+                            )
+                    }
+                    is UpdateDownloadState.Completed -> {
+                        _updateUiState.value =
+                            _updateUiState.value.copy(phase = UpdatePhase.READY)
+                    }
+                    is UpdateDownloadState.Failed -> {
+                        _updateUiState.value =
+                            _updateUiState.value.copy(
+                                phase = UpdatePhase.ERROR,
+                                message = "Download failed",
+                            )
+                    }
+                    UpdateDownloadState.Idle -> Unit
+                }
+            }
+        }
+        viewModelScope.launch {
+            updateRepository.checkForUpdate(BuildConfig.VERSION_NAME)
+                .onSuccess { update ->
+                    if (update == null) return@onSuccess
+                    pendingUpdate = update
+                    val current = updateDownloader.state.value
+                    _updateUiState.value =
+                        when {
+                            current is UpdateDownloadState.Completed &&
+                                current.file.exists() ->
+                                UpdateUiState(UpdatePhase.READY, version = update.version)
+                            current is UpdateDownloadState.Downloading ->
+                                UpdateUiState(
+                                    UpdatePhase.DOWNLOADING,
+                                    version = update.version,
+                                    progress =
+                                        current.progress?.let { (it * 100).toInt() } ?: 0,
+                                )
+                            else -> UpdateUiState(UpdatePhase.AVAILABLE, version = update.version)
+                        }
+                }
+                .onFailure { Timber.w(it, "Update check failed") }
+        }
+    }
+
+    fun startUpdate() {
+        val update = pendingUpdate ?: return
+        // Already downloaded (Phoenix kept-APK): install directly.
+        val current = updateDownloader.state.value
+        if (current is UpdateDownloadState.Completed && current.file.exists()) {
+            _updateUiState.value = _updateUiState.value.copy(phase = UpdatePhase.READY)
+            viewModelScope.launch { postSideEffect(GlobalSideEffect.InstallApk(current.file)) }
+            return
+        }
+        viewModelScope.launch {
+            updateDownloader.start(update).onFailure {
+                Timber.w(it, "Update download failed to start")
+                _updateUiState.value =
+                    _updateUiState.value.copy(
+                        phase = UpdatePhase.ERROR,
+                        message = "Download failed",
+                    )
+            }
+        }
+    }
+
+    fun installUpdate() {
+        val current = updateDownloader.state.value
+        if (current is UpdateDownloadState.Completed && current.file.exists()) {
+            viewModelScope.launch { postSideEffect(GlobalSideEffect.InstallApk(current.file)) }
+        }
+    }
+
+    fun cancelUpdate() {
+        viewModelScope.launch { updateDownloader.cancel() }
+        _updateUiState.value =
+            _updateUiState.value.copy(phase = UpdatePhase.AVAILABLE, progress = 0)
+    }
+
+    // Error only: the banner has no dismiss while an update is available.
+    fun closeUpdate() {
+        _updateUiState.value = UpdateUiState()
     }
 
     private val _showSplitSystemApps = MutableStateFlow(false)

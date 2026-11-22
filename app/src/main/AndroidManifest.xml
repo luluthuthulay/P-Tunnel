@@ -241,21 +241,6 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
-		<!--custom security solution for easier user integration-->
-		<receiver
-			android:name=".core.broadcast.RemoteControlReceiver"
-			android:enabled="true"
-			android:exported="true" tools:ignore="ExportedReceiver">
-			<intent-filter>
-				<action android:name="com.zaneschepke.wireguardautotunnel.START_TUNNEL" />
-				<action android:name="com.zaneschepke.wireguardautotunnel.STOP_TUNNEL" />
-                <action android:name="com.zaneschepke.wireguardautotunnel.TOGGLE_TUNNEL" />
-				<action android:name="com.zaneschepke.wireguardautotunnel.START_AUTO_TUNNEL" />
-				<action android:name="com.zaneschepke.wireguardautotunnel.STOP_AUTO_TUNNEL" />
-				<action android:name="com.zaneschepke.wireguardautotunnel.START_KILL_SWITCH" />
-				<action android:name="com.zaneschepke.wireguardautotunnel.STOP_KILL_SWITCH" />
-			</intent-filter>
-		</receiver>
 		<!--DownloadManager events for in-app updates. Must be exported -->
 		<receiver
 			android:name=".core.broadcast.UpdateDownloadReceiver"

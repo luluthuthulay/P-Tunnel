@@ -40,8 +40,6 @@ interface NotificationService {
 
     fun show(notificationId: Int, notification: Notification)
 
-    fun showUpdateAvailable(version: String)
-
     fun showUpdateReadyToInstall(apk: File)
 
     fun showUpdateDownloadFailed()
