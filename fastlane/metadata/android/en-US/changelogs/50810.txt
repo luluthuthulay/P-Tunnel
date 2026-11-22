@@ -1,0 +1,2 @@
+What's new:
+- Update downloads now check first: if the download page serves an older version, the app downloads the latest release from GitHub instead

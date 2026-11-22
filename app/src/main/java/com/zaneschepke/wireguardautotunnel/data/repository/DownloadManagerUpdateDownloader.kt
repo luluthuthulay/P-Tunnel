@@ -17,6 +17,12 @@ import com.zaneschepke.wireguardautotunnel.domain.repository.UpdateDownloader
 import com.zaneschepke.wireguardautotunnel.domain.sideeffect.GlobalSideEffect
 import com.zaneschepke.wireguardautotunnel.lifecyle.AppVisibilityObserver
 import com.zaneschepke.wireguardautotunnel.notification.NotificationService
+import com.zaneschepke.wireguardautotunnel.ptunnel.PTunnelBoundHttp
+import io.ktor.client.HttpClient
+import io.ktor.client.plugins.timeout
+import io.ktor.client.request.head
+import io.ktor.http.HttpHeaders
+import io.ktor.http.isSuccess
 import java.io.File
 import java.io.IOException
 import kotlin.time.Duration.Companion.milliseconds
@@ -49,6 +55,7 @@ class DownloadManagerUpdateDownloader(
     private val notificationService: NotificationService,
     private val appVisibilityObserver: AppVisibilityObserver,
     private val streamingDownloader: StreamingFileDownloader,
+    private val httpClient: HttpClient,
 ) : UpdateDownloader {
 
     private val downloadManager: DownloadManager? =
@@ -74,11 +81,16 @@ class DownloadManagerUpdateDownloader(
                 if (_state.value is UpdateDownloadState.Downloading) {
                     return@withLock Result.success(Unit)
                 }
-                val url = update.apkUrl
+                val routeUrl = update.apkUrl
                 val fileName = update.apkFileName
-                if (url.isNullOrBlank() || fileName.isNullOrBlank()) {
+                if (routeUrl.isNullOrBlank() || fileName.isNullOrBlank()) {
                     return@withLock Result.failure(IOException("Update has no APK to download"))
                 }
+                // Pre-check (v5.8.10): verify the route actually serves the
+                // expected file before downloading anything. A stale route
+                // goes straight to GitHub — the old code downloaded the
+                // whole stale file first and only found out afterwards.
+                val url = resolveDownloadUrl(update, routeUrl, fileName)
                 discardPrevious()
                 val viaManager = runCatching { enqueueWithManager(update, url, fileName) }
                 if (viaManager.isSuccess) return@withLock viaManager
@@ -96,6 +108,57 @@ class DownloadManagerUpdateDownloader(
                     }
             }
         }
+
+    /**
+     * Pre-download check: HEAD the route and compare the served
+     * filename with the expected one. Route match -> route; anything
+     * else (mismatch, missing header, HEAD failure) -> GitHub direct
+     * (fail-closed, Phoenix pattern). No fallback URL -> route, with
+     * the post-download version check as the only guard.
+     */
+    private suspend fun resolveDownloadUrl(
+        update: AppUpdate,
+        routeUrl: String,
+        fileName: String,
+    ): String {
+        val githubUrl = update.githubApkUrl
+        if (githubUrl.isNullOrBlank()) return routeUrl
+        val served = headServedFileName(routeUrl)
+        val chosen = choosePrecheckDownloadUrl(routeUrl, githubUrl, fileName, served)
+        if (chosen == githubUrl) {
+            Timber.i(
+                "Pre-check: route serves ${served ?: "unknown"}, downloading from GitHub direct",
+            )
+        } else {
+            Timber.i("Pre-check: route serves $served, downloading from route")
+        }
+        return chosen
+    }
+
+    private suspend fun headServedFileName(url: String): String? {
+        val bound = PTunnelBoundHttp.boundClient(httpClient, context)
+        try {
+            val first = runCatching { headFileName(bound, url) }
+            if (first.isSuccess || bound === httpClient) return first.getOrNull()
+            Timber.w("Bound pre-check failed, retrying unbound")
+            return runCatching { headFileName(httpClient, url) }.getOrNull()
+        } finally {
+            if (bound !== httpClient) bound.close()
+        }
+    }
+
+    private suspend fun headFileName(client: HttpClient, url: String): String? {
+        val response =
+            client.config { followRedirects = false }.head(url) {
+                timeout {
+                    requestTimeoutMillis = PRECHECK_TIMEOUT_MS
+                    connectTimeoutMillis = PRECHECK_TIMEOUT_MS
+                    socketTimeoutMillis = PRECHECK_TIMEOUT_MS
+                }
+            }
+        if (!response.status.isSuccess()) return null
+        return parseContentDispositionFilename(response.headers[HttpHeaders.ContentDisposition])
+    }
 
     private fun enqueueWithManager(update: AppUpdate, url: String, fileName: String) {
         val manager = downloadManager ?: throw IOException("DownloadManager is not available")
@@ -483,5 +546,32 @@ class DownloadManagerUpdateDownloader(
         const val FAST_POLL_MS = 500L
         const val SLOW_POLL_MS = 5_000L
         const val APK_MIME_TYPE = "application/vnd.android.package-archive"
+        // Bound for the whole pre-check HEAD (connect + read): past
+        // this the route is treated as unusable and GitHub is used.
+        const val PRECHECK_TIMEOUT_MS = 15_000L
     }
 }
+
+/**
+ * Pure pre-check decision, unit-tested (PTunnelUpdatePrecheckTest).
+ * The filename is the operative signal: the fabricated release asset
+ * carries size 0, so Content-Length cannot be compared.
+ */
+internal fun choosePrecheckDownloadUrl(
+    routeUrl: String,
+    githubUrl: String?,
+    expectedFileName: String,
+    servedFileName: String?,
+): String {
+    if (githubUrl.isNullOrBlank()) return routeUrl
+    return if (servedFileName != null && servedFileName == expectedFileName) routeUrl else githubUrl
+}
+
+/** Parses `filename=` out of a Content-Disposition header value. */
+internal fun parseContentDispositionFilename(header: String?): String? {
+    if (header.isNullOrBlank()) return null
+    val match = FILENAME_PATTERN.find(header) ?: return null
+    return match.groupValues[1].trim().takeIf { it.isNotEmpty() }
+}
+
+private val FILENAME_PATTERN = Regex("""filename\s*=\s*"?([^";]+)"?""")

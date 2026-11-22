@@ -46,6 +46,7 @@ val networkModule = lazyModule {
             get(),
             get(),
             StreamingFileDownloader(get()),
+            get(),
         )
     }
 }
