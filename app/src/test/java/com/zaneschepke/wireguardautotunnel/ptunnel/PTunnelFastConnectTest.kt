@@ -79,7 +79,9 @@ class PTunnelFastConnectTest {
         val a = prober.buildInitiation()
         val b = prober.buildInitiation()
         assertEquals(148, a.size)
-        assertEquals(1, a[0])
+        // a[0] is a Byte: compare as Int, or JUnit's Object overload
+        // compares Integer(1) with Byte(1) and fails on the type.
+        assertEquals(1, a[0].toInt())
         // Fresh ephemeral key per initiation: two packets differ.
         assertNotEquals(a.toList(), b.toList())
     }
