@@ -17,13 +17,16 @@ class KtorGitHubApi(private val client: HttpClient, private val context: Context
         // Bound to the underlying physical network first (Phoenix
         // pattern): a dead tunnel must not strangle the update check.
         // Any bound failure retries once on the plain client.
+        // fetchLatest never throws (it returns Result), so the retry
+        // is decided on the Result, not on an exception.
         val bound = PTunnelBoundHttp.boundClient(client, context)
-        return try {
-            fetchLatest(bound, owner, repo)
-        } catch (e: Exception) {
-            if (bound === client) return Result.failure(e)
-            Timber.w(e, "Bound update check failed, retrying unbound")
-            runCatching { fetchLatest(client, owner, repo) }
+        try {
+            val first = fetchLatest(bound, owner, repo)
+            if (first.isSuccess || bound === client) return first
+            Timber.w("Bound update check failed, retrying unbound")
+            return fetchLatest(client, owner, repo)
+        } finally {
+            if (bound !== client) bound.close()
         }
     }
 

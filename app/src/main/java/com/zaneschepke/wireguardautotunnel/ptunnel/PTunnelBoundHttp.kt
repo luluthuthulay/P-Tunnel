@@ -58,17 +58,22 @@ object PTunnelBoundHttp {
     }
 
     /**
-     * A derived client whose engine runs on the underlying physical
+     * A minimal client whose engine runs on the underlying physical
      * network, or [client] unchanged when no usable underlying network
      * exists. Identity-comparable: `bound === client` means unbound.
+     * The bound client is a fresh [HttpClient] built only for the
+     * header-only update check (no plugins copied from [client]) —
+     * close it when done unless it is [client] itself. A derived
+     * client via `client.config { engine { ... } }` does NOT work:
+     * the engine config type is erased to the base type there, so
+     * OkHttp's `preconfigured` does not resolve.
      */
     fun boundClient(client: HttpClient, context: Context): HttpClient {
         val bound = boundOkHttpClient(context) ?: return client
         return try {
-            client.config {
-                engine {
-                    preconfigured = bound
-                }
+            HttpClient(OkHttp) {
+                engine { preconfigured = bound }
+                followRedirects = false
             }
         } catch (e: Exception) {
             Timber.w(e, "Could not derive bound HTTP client, using unbound")
